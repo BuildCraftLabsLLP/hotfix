@@ -133,6 +133,91 @@ jobs:
           files: |
             dist/Hotfix-${{ github.event.release.tag_name }}-macOS.dmg
 
+  build-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: linux/go.mod
+          cache-dependency-path: linux/go.sum
+
+      - name: Vet and test
+        run: |
+          cd linux
+          go vet ./...
+          go test ./...
+
+      # The licensing backend (worker/src/license.js) the Linux app talks to.
+      - name: Test licensing API
+        run: node --test worker/test/license.test.mjs
+
+      # Pure Go (no CGO): static binaries, so arm64 cross-compiles on the x64
+      # runner and the result runs on any distro regardless of libc.
+      #
+      # The subscription check is compiled in by stamping the license public key
+      # (repo variable LICENSE_PUBLIC_KEY — see worker/README.md) into the
+      # binary. A release must never ship without it — that would be a build
+      # that doesn't enforce licensing — so the job fails instead.
+      - name: Build
+        env:
+          CGO_ENABLED: 0
+          LICENSE_PUBLIC_KEY: ${{ vars.LICENSE_PUBLIC_KEY }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ -z "$LICENSE_PUBLIC_KEY" ] && [ "$EVENT_NAME" = "release" ]; then
+            echo "::error::Repo variable LICENSE_PUBLIC_KEY is not set; refusing to release a Linux build without license enforcement."
+            exit 1
+          fi
+          cd linux
+          for target in amd64:x86_64 arm64:arm64; do
+            mkdir -p "../dist/linux-${target##*:}"
+            GOARCH="${target%%:*}" go build -trimpath \
+              -ldflags "-s -w -X main.licensePublicKey=${LICENSE_PUBLIC_KEY}" \
+              -o "../dist/linux-${target##*:}/hotfix" .
+          done
+          version="$(../dist/linux-x86_64/hotfix --version)"
+          echo "$version"
+          if [ -n "$LICENSE_PUBLIC_KEY" ] && echo "$version" | grep -q "dev build"; then
+            echo "::error::License public key was not compiled into the binary."
+            exit 1
+          fi
+
+      # Per CPU: the raw binary (consumed by the in-place auto-updater) and a
+      # .tar.gz with install.sh (the first-install download).
+      - name: Package
+        run: |
+          tag="${{ github.event.release.tag_name }}"
+          for arch in x86_64 arm64; do
+            name="Hotfix-${tag:-dev}-Linux-${arch}"
+            mkdir -p "dist/${name}"
+            cp "dist/linux-${arch}/hotfix" "dist/${name}/hotfix"
+            cp linux/packaging/install.sh linux/packaging/uninstall.sh "dist/${name}/"
+            cp icon/AppIcon.svg "dist/${name}/hotfix.svg"
+            chmod 755 "dist/${name}/hotfix" "dist/${name}/install.sh" "dist/${name}/uninstall.sh"
+            tar -C dist -czf "dist/${name}.tar.gz" "${name}"
+            rm -rf "dist/${name}"
+            cp "dist/linux-${arch}/hotfix" "dist/${name}"
+          done
+
+      - name: Upload artifact (all runs)
+        uses: actions/upload-artifact@v7
+        with:
+          name: Hotfix-Linux
+          path: dist/Hotfix-*-Linux-*
+
+      - name: Upload to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            dist/Hotfix-${{ github.event.release.tag_name }}-Linux-x86_64
+            dist/Hotfix-${{ github.event.release.tag_name }}-Linux-x86_64.tar.gz
+            dist/Hotfix-${{ github.event.release.tag_name }}-Linux-arm64
+            dist/Hotfix-${{ github.event.release.tag_name }}-Linux-arm64.tar.gz
+
   # On every release, rewrite the site's download buttons to the new
   # version+OS-named assets and push the change back to main (GitHub Pages
   # serves docs/ from main). Keeps docs/index.html links from going stale.

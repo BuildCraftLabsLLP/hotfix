@@ -7,6 +7,7 @@ compatibility_date = "2025-01-01"
 # (orange cloud) and the zone to exist in this Cloudflare account.
 routes = [
   { pattern = "hotfix.buildcraft.town/dl/*", zone_name = "buildcraft.town" },
+  { pattern = "hotfix.buildcraft.town/license/*", zone_name = "buildcraft.town" },
 ]
 
 # Workers KV counter store. Create it once with:
@@ -15,6 +16,22 @@ routes = [
 [[kv_namespaces]]
 binding = "HOTFIX_DL"
 id = "5c5410d8e9844d39ad86217c0bcc235d"
+
+# License store for the Linux subscription (see src/license.js). Create it once:
+#   wrangler kv namespace create HOTFIX_LICENSE
+# then paste the returned id below. Deploys fail until this is a real id.
+[[kv_namespaces]]
+binding = "HOTFIX_LICENSE"
+id = "REPLACE_WITH_HOTFIX_LICENSE_NAMESPACE_ID"
+
+# Licensing secrets — required for /license/* (set with `wrangler secret put <NAME>`):
+#   STRIPE_SECRET_KEY     - Stripe API key (sk_live_... or sk_test_...)
+#   STRIPE_WEBHOOK_SECRET - signing secret of the /license/webhook endpoint (whsec_...)
+#   LICENSE_SIGNING_KEY   - Ed25519 private key; generate with `node scripts/gen-license-key.mjs`
+# Optional: sell an existing recurring Stripe Price instead of the built-in
+# $1/month inline price by uncommenting:
+# [vars]
+# STRIPE_PRICE_ID = "price_..."
 
 # Optional secrets (set with `wrangler secret put <NAME>`):
 #   STATS_TOKEN  - required to read GET /dl/stats?key=...
