@@ -24,6 +24,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -144,8 +145,8 @@ func bindSettingsAPI(w *webView) {
 	w.Bind("hotfixCheckUpdates", func([]json.RawMessage) (any, error) {
 		return nil, signalTray(syscall.SIGUSR1)
 	})
-	w.Bind("hotfixListProcesses", func([]json.RawMessage) (any, error) {
-		return listRunningApps()
+	w.Bind("hotfixListApps", func([]json.RawMessage) (any, error) {
+		return listApps()
 	})
 	w.Bind("hotfixOpenLog", func([]json.RawMessage) (any, error) {
 		path := logFilePath()
@@ -343,12 +344,16 @@ window.addEventListener('load', function () {
         r.rejected = String((e && e.message) || e);
       }
       r.log = typeof (await hotfixGetLog());
-      var apps = await hotfixListProcesses();
+      var apps = await hotfixListApps();
       r.apps = Array.isArray(apps) ? apps.length : -1;
       // Open the exclusions dropdown the way a click does, and count its rows.
       document.getElementById('wl-input').dispatchEvent(new MouseEvent('click'));
       await new Promise(function (done) { setTimeout(done, 2000); });
       r.menuOptions = document.querySelectorAll('#wl-menu .wl-option').length;
+      r.groups = Array.prototype.map.call(document.querySelectorAll('#wl-menu .wl-menu-head'),
+        function (e) { return e.textContent; });
+      r.labels = Array.prototype.map.call(document.querySelectorAll('#wl-menu .wl-option-label'),
+        function (e) { return e.textContent; });
     } catch (e) {
       r.error = String((e && e.message) || e);
     }
@@ -358,16 +363,18 @@ window.addEventListener('load', function () {
 `
 
 type selfTestReport struct {
-	Title           string  `json:"title"`
-	Badge           string  `json:"badge"`
-	About           string  `json:"about"`
-	CPU             string  `json:"cpu"`
-	ConfigThreshold float64 `json:"configThreshold"`
-	Rejected        string  `json:"rejected"`
-	Log             string  `json:"log"`
-	Apps            int     `json:"apps"`
-	MenuOptions     int     `json:"menuOptions"`
-	Error           string  `json:"error"`
+	Title           string   `json:"title"`
+	Badge           string   `json:"badge"`
+	About           string   `json:"about"`
+	CPU             string   `json:"cpu"`
+	ConfigThreshold float64  `json:"configThreshold"`
+	Rejected        string   `json:"rejected"`
+	Log             string   `json:"log"`
+	Apps            int      `json:"apps"`
+	MenuOptions     int      `json:"menuOptions"`
+	Groups          []string `json:"groups"`
+	Labels          []string `json:"labels"`
+	Error           string   `json:"error"`
 }
 
 type selfTest struct {
@@ -425,8 +432,14 @@ func (st *selfTest) finish() int {
 	check(r.CPU == strconv.Itoa(int(r.ConfigThreshold)), "CPU slider doesn't show the loaded threshold")
 	check(r.Rejected != "", "an invalid save was not rejected")
 	check(r.Log == "string", "hotfixGetLog")
-	check(r.Apps > 0, "hotfixListProcesses returned no running apps")
-	check(r.MenuOptions > 0, "the exclusions dropdown showed no running apps")
+	check(r.Apps > 0, "hotfixListApps returned no apps")
+	check(r.MenuOptions > 0, "the exclusions dropdown showed no apps")
+	// CI installs a fake app (a .desktop entry) and names it here, to check
+	// the dropdown's "Installed" group end to end.
+	if want := os.Getenv("HOTFIX_SELFTEST_EXPECT_APP"); want != "" {
+		check(slices.Contains(r.Groups, "Installed") && slices.Contains(r.Labels, want),
+			"installed app "+want+" missing from the dropdown")
+	}
 	check(err == nil && saved.CPUThreshold == 65, "hotfixSaveConfig didn't save the new threshold")
 	if len(problems) > 0 {
 		fmt.Println("settings self-test: FAIL —", strings.Join(problems, "; "))

@@ -49,6 +49,7 @@ var (
 // openSettings shows the settings popover, creating it on first use. Safe to
 // call from the tray event loop; never blocks.
 func openSettings() {
+	cachedInstalledApps() // refresh the exclusions dropdown's app list if stale
 	settingsMu.Lock()
 	switch {
 	case settingsFailed:
@@ -138,7 +139,7 @@ func bindSettingsAPI(w webview2.WebView) {
 	_ = w.Bind("hotfixGetLog", func() (string, error) { return readLogText(), nil })
 	_ = w.Bind("hotfixCheckUpdates", func() error { safeGo("update", func() { checkForUpdates(false) }); return nil })
 	_ = w.Bind("hotfixOpenLog", func() error { return openLogExternally() })
-	_ = w.Bind("hotfixListProcesses", func() ([]runningApp, error) { return listRunningApps() })
+	_ = w.Bind("hotfixListApps", func() ([]appEntry, error) { return listApps() })
 }
 
 // applySavedConfig validates cfg, persists it, and starts/stops the monitor to

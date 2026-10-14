@@ -8,8 +8,8 @@ import (
 	"time"
 )
 
-// runningApp is one entry in the settings page's running-apps dropdown
-// (Exclusions card), returned by the hotfixListProcesses binding.
+// runningApp is a running app for the exclusions dropdown (Exclusions card);
+// listApps merges these with the installed apps.
 type runningApp struct {
 	Name string  `json:"name"`
 	CPU  float64 `json:"cpu"` // percent of one core, summed over the app's processes
@@ -83,4 +83,51 @@ func groupApps(entries []processEntry, exeName func(pid int) string) []runningAp
 		return strings.ToLower(apps[i].Name) < strings.ToLower(apps[j].Name)
 	})
 	return apps
+}
+
+// appEntry is one row of the exclusions dropdown, returned by the
+// hotfixListApps binding: a running app (with its CPU use) or an installed
+// one. Name is what gets excluded; Label is the app's friendly name, if known.
+type appEntry struct {
+	Name    string  `json:"name"`
+	Label   string  `json:"label,omitempty"`
+	CPU     float64 `json:"cpu"`
+	Running bool    `json:"running"`
+}
+
+// listApps returns the running apps (busiest first) followed by the installed
+// apps that aren't running (by label).
+func listApps() ([]appEntry, error) {
+	running, err := listRunningApps()
+	if err != nil {
+		return nil, err
+	}
+	return mergeApps(running, installedApps()), nil
+}
+
+// mergeApps combines the running and installed lists: a running app gets its
+// installed label, and an installed app that's running isn't listed twice.
+func mergeApps(running []runningApp, installed []installedApp) []appEntry {
+	labels := make(map[string]string, len(installed))
+	for _, a := range installed {
+		if _, ok := labels[strings.ToLower(a.Name)]; !ok {
+			labels[strings.ToLower(a.Name)] = a.Label
+		}
+	}
+	out := make([]appEntry, 0, len(running)+len(installed))
+	isRunning := make(map[string]bool, len(running))
+	for _, r := range running {
+		key := strings.ToLower(r.Name)
+		isRunning[key] = true
+		out = append(out, appEntry{Name: r.Name, Label: labels[key], CPU: r.CPU, Running: true})
+	}
+	for _, a := range installed {
+		key := strings.ToLower(a.Name)
+		if isRunning[key] {
+			continue
+		}
+		isRunning[key] = true // also dedupes installed entries sharing a program
+		out = append(out, appEntry{Name: a.Name, Label: a.Label})
+	}
+	return out
 }

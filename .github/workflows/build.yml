@@ -235,8 +235,18 @@ jobs:
       - name: Test settings window
         env:
           WEBKIT_DISABLE_COMPOSITING_MODE: 1
+          HOTFIX_SELFTEST_EXPECT_APP: Selftest Editor
         run: |
           export XDG_CONFIG_HOME="$(mktemp -d)" XDG_STATE_HOME="$(mktemp -d)" XDG_RUNTIME_DIR="$(mktemp -d)"
+          # A fake installed app, which the exclusions dropdown must list.
+          export XDG_DATA_HOME="$(mktemp -d)"
+          mkdir -p "$XDG_DATA_HOME/applications"
+          {
+            echo '[Desktop Entry]'
+            echo 'Type=Application'
+            echo 'Name=Selftest Editor'
+            echo 'Exec=selftest-editor %F'
+          } > "$XDG_DATA_HOME/applications/selftest-editor.desktop"
           xvfb-run -a "dist/linux-${{ matrix.arch }}/hotfix" --settings-selftest
 
       # The raw binary (consumed by the in-place auto-updater), a .deb and .rpm

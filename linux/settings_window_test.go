@@ -83,7 +83,7 @@ func TestRenderSettingsHTML(t *testing.T) {
 	if !strings.Contains(html, `<span class="header-badge">Linux</span>`) || strings.Contains(html, ">Windows<") {
 		t.Error("page should be labelled Linux, not Windows")
 	}
-	for _, fn := range []string{"hotfixGetConfig", "hotfixSaveConfig", "hotfixGetLog", "hotfixCheckUpdates", "hotfixOpenLog", "hotfixListProcesses"} {
+	for _, fn := range []string{"hotfixGetConfig", "hotfixSaveConfig", "hotfixGetLog", "hotfixCheckUpdates", "hotfixOpenLog", "hotfixListApps"} {
 		if !strings.Contains(html, fn+"(") {
 			t.Errorf("page no longer calls %s", fn)
 		}
