@@ -19,7 +19,7 @@ Hotfix runs quietly in the menu bar (macOS) or system tray (Windows). Every few 
 
 - [Download for macOS](https://hotfix.buildcraft.town/dl/mac): Latest signed DMG (universal, Apple Silicon + Intel). First launch: right-click → Open.
 - [Download for Windows](https://hotfix.buildcraft.town/dl/win): Latest per-user installer (no admin rights needed).
-- [Download for Linux](https://hotfix.buildcraft.town/dl/linux): Latest x86-64 tarball with a per-user `install.sh` (no root). Requires a $1/month subscription per computer, started from the tray menu. ARM64: https://hotfix.buildcraft.town/dl/linux-arm64
+- [Download for Linux](https://hotfix.buildcraft.town/dl/linux): Latest .deb for Ubuntu/Debian/Mint (double-click to install). Also: [.rpm for Fedora/openSUSE](https://hotfix.buildcraft.town/dl/linux-rpm), [.tar.gz for any distro](https://hotfix.buildcraft.town/dl/linux-tar) with a per-user `install.sh` (no root), and [ARM64](https://hotfix.buildcraft.town/dl/linux-arm64). Requires a $1/month subscription per computer, started from the tray menu.
 
 ## Links
 

@@ -22,11 +22,16 @@ Claude extensions, AI tools, and background daemons run rogue — consuming 50�
 |----------|----------|-------------|
 | **macOS** | [Hotfix.dmg](https://github.com/BuildCraftLabsLLP/hotfix/releases/latest) | macOS 13+ · Apple Silicon or Intel |
 | **Windows** | [Hotfix-Setup.exe](https://github.com/BuildCraftLabsLLP/hotfix/releases/latest) | Windows 11 · x64 |
-| **Linux** | [Hotfix-…-Linux-x86_64.tar.gz](https://github.com/BuildCraftLabsLLP/hotfix/releases/latest) | x86-64 or arm64 · a desktop with a system tray (StatusNotifierItem) |
+| **Linux** | [Hotfix-…-Linux-x86_64.deb](https://github.com/BuildCraftLabsLLP/hotfix/releases/latest) (also `.rpm`, `.tar.gz`) | x86-64 or arm64 · a desktop with a system tray (StatusNotifierItem) |
 
 > **Windows:** the installer is per-user (no admin) — it installs to `%LOCALAPPDATA%\Programs\Hotfix`, adds an uninstaller to **Apps & features**, and updates itself silently in the background. Delete the downloaded `Hotfix-Setup.exe` once it's installed.
 
-> **Linux:** extract the tarball and run `./install.sh` (add `--autostart` to start at login). It installs per-user (no root) to `~/.local/bin/hotfix` with an app-menu entry, and updates itself silently in the background. `./uninstall.sh` removes it. See [Linux notes](#linux-notes) for tray and Wayland caveats.
+> **Linux:** pick the package for your distro:
+> - **Ubuntu, Debian, Mint** — download the `.deb` and double-click it (or `sudo apt install ./Hotfix-…-Linux-x86_64.deb`). Hotfix then appears in the app menu; remove it from the App Center or with `sudo apt remove hotfix`.
+> - **Fedora, openSUSE** — the `.rpm`: `sudo dnf install ./Hotfix-…-Linux-x86_64.rpm`.
+> - **Any distro, no root** — the `.tar.gz`: extract it and run `./install.sh` (add `--autostart` to start at login). It installs per-user to `~/.local/bin/hotfix` with an app-menu entry; `./uninstall.sh` removes it.
+>
+> The per-user `.tar.gz` install updates itself silently in the background. The `.deb`/`.rpm` install system-wide, which the app can't overwrite, so it notifies you when a new version is out and you install the new package. See [Linux notes](#linux-notes) for tray and Wayland caveats.
 
 > **macOS:** Not yet notarized — right-click → **Open** on first launch to bypass Gatekeeper.
 

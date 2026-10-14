@@ -38,6 +38,10 @@ var releaseAssets = []githubAsset{
 	{Name: "Hotfix-v1.2.3-Linux-x86_64", BrowserDownloadURL: "https://example/x64"},
 	{Name: "Hotfix-v1.2.3-Linux-arm64.tar.gz", BrowserDownloadURL: "https://example/arm64.tar.gz"},
 	{Name: "Hotfix-v1.2.3-Linux-arm64", BrowserDownloadURL: "https://example/arm64"},
+	{Name: "Hotfix-v1.2.3-Linux-x86_64.deb", BrowserDownloadURL: "https://example/x64.deb"},
+	{Name: "Hotfix-v1.2.3-Linux-x86_64.rpm", BrowserDownloadURL: "https://example/x64.rpm"},
+	{Name: "Hotfix-v1.2.3-Linux-arm64.deb", BrowserDownloadURL: "https://example/arm64.deb"},
+	{Name: "Hotfix-v1.2.3-Linux-arm64.rpm", BrowserDownloadURL: "https://example/arm64.rpm"},
 }
 
 func TestPickRawBinaryURL_PicksRawBinaryForArch(t *testing.T) {
@@ -57,10 +61,17 @@ func TestPickRawBinaryURL_NoMatch(t *testing.T) {
 	if got := pickRawBinaryURL(releaseAssets[:3], "amd64"); got != "" {
 		t.Errorf("pre-Linux release should find nothing, got %q", got)
 	}
-	// The tarball alone must never be installed as the binary.
-	tarOnly := []githubAsset{releaseAssets[3]}
-	if got := pickRawBinaryURL(tarOnly, "amd64"); got != "" {
-		t.Errorf("tarball must not be picked, got %q", got)
+	// Packages must never be installed as the binary.
+	var packagesOnly []githubAsset
+	for _, a := range releaseAssets {
+		if strings.HasSuffix(a.Name, ".tar.gz") || strings.HasSuffix(a.Name, ".deb") || strings.HasSuffix(a.Name, ".rpm") {
+			packagesOnly = append(packagesOnly, a)
+		}
+	}
+	for _, arch := range []string{"amd64", "arm64"} {
+		if got := pickRawBinaryURL(packagesOnly, arch); got != "" {
+			t.Errorf("%s: a package must not be picked, got %q", arch, got)
+		}
 	}
 }
 

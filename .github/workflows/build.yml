@@ -185,13 +185,35 @@ jobs:
             exit 1
           fi
 
-      # Per CPU: the raw binary (consumed by the in-place auto-updater) and a
-      # .tar.gz with install.sh (the first-install download).
+      # Per CPU: the raw binary (consumed by the in-place auto-updater), a .deb
+      # and .rpm (double-click installers, the Linux counterpart of Setup.exe —
+      # see linux/packaging/nfpm.yaml), and a .tar.gz with install.sh (per-user
+      # install for any other distro).
       - name: Package
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          NFPM_VERSION: v2.48.0
         run: |
-          tag="${{ github.event.release.tag_name }}"
-          for arch in x86_64 arm64; do
-            name="Hotfix-${tag:-dev}-Linux-${arch}"
+          if [ -n "$TAG" ]; then
+            pkgver="${TAG#v}"
+          else
+            pkgver="$(sed -n 's/^[[:space:]]*currentVersion *= *"\(.*\)"/\1/p' linux/updater.go)-dev"
+          fi
+          echo "package version: $pkgver"
+          go install "github.com/goreleaser/nfpm/v2/cmd/nfpm@${NFPM_VERSION}"
+          nfpm="$(go env GOPATH)/bin/nfpm"
+
+          for target in amd64:x86_64 arm64:arm64; do
+            goarch="${target%%:*}"; arch="${target##*:}"
+            name="Hotfix-${TAG:-dev}-Linux-${arch}"
+
+            install -D -m 755 "dist/linux-${arch}/hotfix" dist/nfpm/hotfix
+            for fmt in deb rpm; do
+              ARCH="$goarch" VERSION="$pkgver" \
+                "$nfpm" package -f linux/packaging/nfpm.yaml -p "$fmt" -t "dist/${name}.${fmt}"
+            done
+            rm -rf dist/nfpm
+
             mkdir -p "dist/${name}"
             cp "dist/linux-${arch}/hotfix" "dist/${name}/hotfix"
             cp linux/packaging/install.sh linux/packaging/uninstall.sh "dist/${name}/"
@@ -201,6 +223,31 @@ jobs:
             rm -rf "dist/${name}"
             cp "dist/linux-${arch}/hotfix" "dist/${name}"
           done
+          ls -la dist/
+
+      # Install the x86_64 .deb on the runner the way a user would, check what
+      # landed where, then remove it again. Also sanity-check the .rpm metadata.
+      - name: Test packages
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          name="Hotfix-${TAG:-dev}-Linux-x86_64"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq desktop-file-utils rpm
+          desktop-file-validate linux/packaging/hotfix.desktop
+
+          dpkg-deb --info "dist/${name}.deb"
+          sudo apt-get install -y "./dist/${name}.deb"
+          dpkg -L hotfix
+          test "$(command -v hotfix)" = /usr/bin/hotfix
+          hotfix --version
+          test -f /usr/share/applications/hotfix.desktop
+          test -f /usr/share/icons/hicolor/scalable/apps/hotfix.svg
+          sudo apt-get remove -y hotfix
+          test ! -e /usr/bin/hotfix
+
+          rpm -qip "dist/${name}.rpm"
+          rpm -qlp "dist/${name}.rpm" | grep -qx /usr/bin/hotfix
 
       - name: Upload artifact (all runs)
         uses: actions/upload-artifact@v7
@@ -214,8 +261,12 @@ jobs:
         with:
           files: |
             dist/Hotfix-${{ github.event.release.tag_name }}-Linux-x86_64
+            dist/Hotfix-${{ github.event.release.tag_name }}-Linux-x86_64.deb
+            dist/Hotfix-${{ github.event.release.tag_name }}-Linux-x86_64.rpm
             dist/Hotfix-${{ github.event.release.tag_name }}-Linux-x86_64.tar.gz
             dist/Hotfix-${{ github.event.release.tag_name }}-Linux-arm64
+            dist/Hotfix-${{ github.event.release.tag_name }}-Linux-arm64.deb
+            dist/Hotfix-${{ github.event.release.tag_name }}-Linux-arm64.rpm
             dist/Hotfix-${{ github.event.release.tag_name }}-Linux-arm64.tar.gz
 
   # On every release, rewrite the site's download buttons to the new

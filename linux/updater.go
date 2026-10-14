@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -117,7 +118,25 @@ func checkForUpdates(auto bool) {
 
 	logf("updater: downloading %s from %s", tag, binURL)
 	setTrayStatus("Downloading update…", false)
-	downloadAndReplace(binURL, auto)
+	downloadAndReplace(binURL, tag, auto)
+}
+
+var (
+	notifiedMu      sync.Mutex
+	notifiedVersion string // newest release a package install was told about
+)
+
+// notifyUpdateOnce tells a .deb/.rpm user (who can't self-update) that version
+// is out — once per version, so the 6-hourly check doesn't repeat it.
+func notifyUpdateOnce(version string) {
+	notifiedMu.Lock()
+	defer notifiedMu.Unlock()
+	if notifiedVersion == version {
+		return
+	}
+	notifiedVersion = version
+	notifyToast("Hotfix — Update available",
+		fmt.Sprintf("Hotfix %s is out. Choose Check for Updates in the Hotfix menu to download it.", version))
 }
 
 // archLabel maps GOARCH to the label used in release asset names.
@@ -130,7 +149,8 @@ func archLabel(goarch string) string {
 
 // pickRawBinaryURL returns the download URL of the raw Linux binary for goarch
 // (Hotfix-v<version>-Linux-<arch>, no extension) — the one the in-place updater
-// swaps onto disk. The .tar.gz bundle is skipped: it's only for first installs.
+// swaps onto disk. The .tar.gz, .deb and .rpm packages are skipped: they're only
+// for first installs.
 func pickRawBinaryURL(assets []githubAsset, goarch string) string {
 	suffix := "-linux-" + archLabel(goarch)
 	for _, a := range assets {
@@ -148,9 +168,9 @@ var elfMagic = []byte{0x7f, 'E', 'L', 'F'}
 // downloadAndReplace downloads the new binary next to the running one, renames
 // it over the executable (atomic, and safe while running on Linux), and
 // re-executes. Works without root because install.sh installs per-user under
-// ~/.local/bin; if the install location isn't writable (e.g. a system package)
-// the update is left to whatever installed it.
-func downloadAndReplace(binURL string, auto bool) {
+// ~/.local/bin. A .deb/.rpm install lives in /usr/bin, which isn't writable:
+// there the user is told a new version exists and installs the new package.
+func downloadAndReplace(binURL, version string, auto bool) {
 	fail := func(format string, args ...any) {
 		logf("updater: "+format, args...)
 		flashTrayStatus("Update failed")
@@ -170,7 +190,9 @@ func downloadAndReplace(binURL string, auto bool) {
 	if err != nil {
 		logf("updater: install location not writable (%v); skipping self-update", err)
 		setTrayStatus(baseStatus(getConfig()), false)
-		if !auto {
+		if auto {
+			notifyUpdateOnce(version)
+		} else {
 			openURL(releasesPageURL)
 		}
 		return
