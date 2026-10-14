@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sync"
 	"syscall"
@@ -22,51 +23,41 @@ var flamePNG []byte
 
 const defaultTooltip = "Hotfix — by BuildCraft Labs"
 
-// The tray menu is the whole settings UI on Linux (there is no settings
-// window): toggles are checkboxes, and the two numeric settings are submenus of
-// presets. Any other value — and the whitelist — is set in config.json, which
-// "Edit Config File…" opens and which is reloaded automatically on save.
-var (
-	thresholdPresets = []float64{50, 60, 70, 80, 90, 100} // percent
-	durationPresets  = []float64{15, 30, 60, 120, 300}    // seconds
-)
-
-type presetItem struct {
-	value float64
-	item  *systray.MenuItem
-}
-
 // --- Tray state ---
+//
+// The menu mirrors the Windows app: a status line, Enable Monitoring,
+// Settings… (the same settings popover as Windows — see settings_window.go),
+// Check for Updates and Quit. Linux adds the subscription items (license.go).
 var (
-	mStatus    *systray.MenuItem
-	mToggle    *systray.MenuItem
-	mThreshold *systray.MenuItem
-	mDuration  *systray.MenuItem
-	mSleep     *systray.MenuItem
-	mProtect   *systray.MenuItem
-	mStartup   *systray.MenuItem
+	mStatus *systray.MenuItem
+	mToggle *systray.MenuItem
 
-	// Subscription items (see license.go): Subscribe/Refresh show while the
-	// app is locked, Manage while it is subscribed.
+	// Subscription items: Subscribe/Refresh show while the app is locked,
+	// Manage while it is subscribed.
 	mSubscribe *systray.MenuItem
 	mRefresh   *systray.MenuItem
 	mManage    *systray.MenuItem
-
-	thresholdItems []presetItem
-	durationItems  []presetItem
 
 	trayMu        sync.Mutex
 	statusTimeout *time.Timer
 )
 
 func main() {
-	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "-v") {
-		if licenseEnforced() {
-			fmt.Println("Hotfix", currentVersion)
-		} else {
-			fmt.Println("Hotfix", currentVersion, "(dev build: licensing not enforced)")
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "--version", "-v":
+			if licenseEnforced() {
+				fmt.Println("Hotfix", currentVersion)
+			} else {
+				fmt.Println("Hotfix", currentVersion, "(dev build: licensing not enforced)")
+			}
+			return
+		case settingsFlag:
+			// The settings window runs in its own process (see settings_window.go).
+			os.Exit(runSettingsWindow(false))
+		case settingsSelfTestFlag:
+			os.Exit(runSettingsWindow(true))
 		}
-		return
 	}
 
 	// Set up logging before anything else.
@@ -121,7 +112,7 @@ func onReady() {
 	systray.SetTitle("Hotfix")
 	systray.SetTooltip(defaultTooltip)
 
-	// Build menu.
+	// Build menu (same items and order as the Windows tray).
 	mStatus = systray.AddMenuItem("Hotfix — Watching", "")
 	mStatus.Disable()
 	mSubscribe = systray.AddMenuItem("Subscribe ($1/month)…", "Unlock Hotfix on this computer")
@@ -131,31 +122,12 @@ func onReady() {
 	systray.AddSeparator()
 
 	mToggle = systray.AddMenuItemCheckbox("Enable Monitoring", "", false)
-
-	mThreshold = systray.AddMenuItem("CPU Threshold", "Kill processes above this CPU usage")
-	for _, v := range thresholdPresets {
-		it := mThreshold.AddSubMenuItemCheckbox(fmt.Sprintf("%.0f%%", v), "", false)
-		thresholdItems = append(thresholdItems, presetItem{v, it})
-		onClick(it, "threshold", func() { updateConfig(func(c *Config) { c.CPUThreshold = v }) })
-	}
-
-	mDuration = systray.AddMenuItem("Kill After", "How long a process must stay hot before it is killed")
-	for _, v := range durationPresets {
-		it := mDuration.AddSubMenuItemCheckbox(formatDuration(v), "", false)
-		durationItems = append(durationItems, presetItem{v, it})
-		onClick(it, "duration", func() { updateConfig(func(c *Config) { c.KillDuration = v }) })
-	}
-
-	mSleep = systray.AddMenuItemCheckbox("Kill on Sleep", "Kill hot processes when the system suspends", false)
-	mProtect = systray.AddMenuItemCheckbox("Protect Active App", "Never kill the app you're currently using", false)
-	mStartup = systray.AddMenuItemCheckbox("Start at Login", "Launch Hotfix when you log in", false)
 	systray.AddSeparator()
 
-	mConfig := systray.AddMenuItem("Edit Config File…", "Edit the whitelist and other settings")
-	mLog := systray.AddMenuItem("View Log", "Open the Hotfix log")
+	mSettings := systray.AddMenuItem("Settings...", "Open Hotfix settings")
+	mUpdate := systray.AddMenuItem("Check for Updates", "Check GitHub for a newer release")
 	mManage = systray.AddMenuItem("Manage Subscription…", "Update payment details or cancel")
 	mManage.Hide()
-	mUpdate := systray.AddMenuItem("Check for Updates", "Check GitHub for a newer release")
 	systray.AddSeparator()
 	mQuit := systray.AddMenuItem("Quit", "Quit Hotfix")
 
@@ -170,8 +142,11 @@ func onReady() {
 	// Watch for system suspend (KillOnSleep support).
 	watchSleep()
 
-	// Pick up hand edits to config.json.
+	// Pick up config changes made by the settings window or by hand.
 	watchConfigFile()
+
+	// Requests from the settings window process.
+	watchSettingsSignals()
 
 	// Begin silent background auto-updates (launch check + periodic poll).
 	startAutoUpdater()
@@ -179,20 +154,17 @@ func onReady() {
 	// Click handlers. Each runs through safe(), so a panic in one handler is
 	// captured and reported rather than silently killing the tray.
 	onClick(mToggle, "toggle", func() { updateConfig(func(c *Config) { c.Enabled = !c.Enabled }) })
-	onClick(mSleep, "kill-on-sleep", func() { updateConfig(func(c *Config) { c.KillOnSleep = !c.KillOnSleep }) })
-	onClick(mProtect, "protect-active", func() { updateConfig(func(c *Config) { c.ProtectActiveApp = !c.ProtectActiveApp }) })
-	onClick(mStartup, "start-at-login", func() { updateConfig(func(c *Config) { c.LaunchAtLogin = !c.LaunchAtLogin }) })
+	onClick(mSettings, "settings", openSettings)
+	onClick(mUpdate, "update", func() { safeGo("update", func() { checkForUpdates(false) }) })
 	onClick(mSubscribe, "subscribe", openSubscribePage)
 	onClick(mRefresh, "refresh-license", recheckLicenseNow)
 	onClick(mManage, "manage-subscription", openManagePage)
-	onClick(mConfig, "edit-config", openConfigFile)
-	onClick(mLog, "view-log", openLogFile)
-	onClick(mUpdate, "update", func() { safeGo("update", func() { checkForUpdates(false) }) })
 	onClick(mQuit, "quit", systray.Quit)
 }
 
 func onExit() {
 	stopMonitor()
+	closeSettingsWindow()
 	logf("Hotfix exiting")
 	closeLog()
 }
@@ -202,6 +174,24 @@ func onClick(item *systray.MenuItem, name string, fn func()) {
 	safeGo("menu-"+name, func() {
 		for range item.ClickedCh {
 			safe(name, fn)
+		}
+	})
+}
+
+// watchSettingsSignals serves the settings window process, which signals the
+// tray process instead of opening a channel to it: SIGUSR1 = check for updates,
+// SIGUSR2 = the config file was saved, reload it now.
+func watchSettingsSignals() {
+	ch := make(chan os.Signal, 4)
+	signal.Notify(ch, syscall.SIGUSR1, syscall.SIGUSR2)
+	safeGo("settings-signals", func() {
+		for sig := range ch {
+			switch sig {
+			case syscall.SIGUSR1:
+				safeGo("update", func() { checkForUpdates(false) })
+			case syscall.SIGUSR2:
+				reloadConfig()
+			}
 		}
 	})
 }
@@ -218,18 +208,34 @@ func updateConfig(mutate func(*Config)) {
 	}
 }
 
-// applyConfig validates cfg, persists it, applies the autostart toggle, and
-// brings the monitor and tray menu in line. The caller must hold applyMu.
+// applyConfig persists cfg and brings the monitor and tray menu in line. The
+// caller must hold applyMu.
 func applyConfig(cfg Config) error {
-	if err := validateConfig(cfg); err != nil {
+	saved, err := persistConfig(cfg)
+	if err != nil {
 		return err
+	}
+	configMu.Lock()
+	current = saved
+	configMu.Unlock()
+	applyRuntime(saved)
+	return nil
+}
+
+// persistConfig validates cfg, applies the autostart toggle, and writes the
+// config file. It returns the config as saved, with LaunchAtLogin reflecting
+// the real autostart state. Shared by the tray and the settings window, so it
+// touches no in-process state.
+func persistConfig(cfg Config) (Config, error) {
+	if err := validateConfig(cfg); err != nil {
+		return cfg, err
 	}
 	if cfg.Whitelist == nil {
 		cfg.Whitelist = []string{}
 	}
 
 	// Apply the autostart toggle first and record what actually happened, so a
-	// failure leaves the checkbox reflecting the real state.
+	// failure leaves the toggle reflecting the real state.
 	if cfg.LaunchAtLogin != launchAtLoginEnabled() {
 		if err := setLaunchAtLogin(cfg.LaunchAtLogin); err != nil {
 			logf("settings: launch-at-login toggle failed: %v", err)
@@ -239,15 +245,13 @@ func applyConfig(cfg Config) error {
 		cfg.LaunchAtLogin = launchAtLoginEnabled()
 	}
 
-	if err := setConfig(cfg); err != nil {
+	if err := saveConfig(cfg); err != nil {
 		logf("settings: save config error: %v", err)
-		return fmt.Errorf("save error")
+		return cfg, fmt.Errorf("save error")
 	}
 	logf("settings: config saved (enabled=%v, threshold=%.0f%%, kill_after=%.0fs)",
 		cfg.Enabled, cfg.CPUThreshold, cfg.KillDuration)
-
-	applyRuntime(cfg)
-	return nil
+	return cfg, nil
 }
 
 // applyRuntime starts/stops the monitor to match cfg.Enabled and refreshes the
@@ -275,7 +279,7 @@ func baseStatus(cfg Config) string {
 	}
 }
 
-// syncMenu updates every checkbox and preset label to reflect the config.
+// syncMenu updates the menu to reflect the config and subscription state.
 // nil-guarded so it is safe to call before the tray menu is built (e.g. from
 // tests) without panicking.
 func syncMenu() {
@@ -284,34 +288,21 @@ func syncMenu() {
 	}
 	cfg := getConfig()
 
-	// Locked: offer Subscribe / Refresh and grey out the settings. Subscribed
-	// (in a build that enforces licensing): offer Manage Subscription.
+	// Locked: offer Subscribe / Refresh and grey out monitoring. Subscribed (in
+	// a build that enforces licensing): offer Manage Subscription.
 	ok := licensed()
 	setVisible(mSubscribe, !ok)
 	setVisible(mRefresh, !ok)
 	setVisible(mManage, ok && licenseEnforced())
-	for _, it := range []*systray.MenuItem{mToggle, mThreshold, mDuration, mSleep, mProtect} {
-		if ok {
-			it.Enable()
-		} else {
-			it.Disable()
-		}
+	if ok {
+		mToggle.Enable()
+	} else {
+		mToggle.Disable()
 	}
-
-	setChecked(mToggle, cfg.Enabled)
-	setChecked(mSleep, cfg.KillOnSleep)
-	setChecked(mProtect, cfg.ProtectActiveApp)
-	setChecked(mStartup, cfg.LaunchAtLogin)
-
-	// The current value is shown in the parent label, so a hand-edited value
-	// that matches no preset is still visible.
-	mThreshold.SetTitle(fmt.Sprintf("CPU Threshold: %.0f%%", cfg.CPUThreshold))
-	for _, p := range thresholdItems {
-		setChecked(p.item, p.value == cfg.CPUThreshold)
-	}
-	mDuration.SetTitle("Kill After: " + formatDuration(cfg.KillDuration))
-	for _, p := range durationItems {
-		setChecked(p.item, p.value == cfg.KillDuration)
+	if cfg.Enabled {
+		mToggle.Check()
+	} else {
+		mToggle.Uncheck()
 	}
 }
 
@@ -323,23 +314,8 @@ func setVisible(item *systray.MenuItem, on bool) {
 	}
 }
 
-func setChecked(item *systray.MenuItem, on bool) {
-	if on {
-		item.Check()
-	} else {
-		item.Uncheck()
-	}
-}
-
-// formatDuration renders seconds as "30s" or, for whole minutes, "2 min".
-func formatDuration(sec float64) string {
-	if s := int(sec); float64(s) == sec && s >= 60 && s%60 == 0 {
-		return fmt.Sprintf("%d min", s/60)
-	}
-	return fmt.Sprintf("%.0fs", sec)
-}
-
-// openConfigFile opens config.json in the user's default editor.
+// openConfigFile opens config.json in the user's default editor. It is the
+// fallback when the settings window can't be shown (no WebKitGTK).
 func openConfigFile() {
 	path, err := configPath()
 	if err != nil {
@@ -350,13 +326,6 @@ func openConfigFile() {
 		_ = saveConfig(getConfig())
 	}
 	openURL(path)
-}
-
-// openLogFile opens the log in the user's default text viewer.
-func openLogFile() {
-	if path := logFilePath(); path != "" {
-		openURL(path)
-	}
 }
 
 // notifyKilled is called from monitor.go after a process is terminated.

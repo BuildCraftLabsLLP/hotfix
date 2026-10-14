@@ -65,10 +65,12 @@ Settings are accessible from the tray icon → **Settings**.
 
 **Hotfix for Linux is a $1/month subscription, per computer.** On first launch the tray shows **Subscribe ($1/month)…**, which opens a Stripe checkout page in your browser; the app unlocks by itself a few seconds after payment. The subscription is tied to that one machine (no license key to enter or share) — **Manage Subscription…** opens Stripe's billing portal to update your card or cancel. Until subscribed, monitoring is off. A subscribed machine keeps working offline for up to 72 hours between license checks.
 
-The Linux build has no settings window — **the tray menu is the settings UI**. Toggles are checkboxes, and CPU Threshold / Kill After are submenus of presets. For any other value, and for the exclusion list, choose **Edit Config File…** (`~/.config/hotfix/config.json`); changes are picked up automatically when you save.
+The Linux app looks and works like the Windows one: the same tray menu, and **Settings…** opens the same settings popover — protection toggles, CPU threshold and kill-after sliders, exclusions, logs and About. It renders with **WebKitGTK 4.1**, which the `.deb`/`.rpm` install automatically; with the `.tar.gz`, install it yourself (`sudo apt install libwebkit2gtk-4.1-0`) — without it the tray still works and Settings opens `~/.config/hotfix/config.json` instead (changes there are picked up automatically when you save).
 
 - **CPU % is per core**, as in `top`: a process using two full cores reads 200%.
 - **Only your own processes** are monitored (Hotfix runs without root). The desktop session itself (systemd, the compositor/X server, PipeWire, D-Bus, …) is permanently protected.
+- **Requirements:** a glibc-based distro from about 2022 on (Ubuntu 22.04+, Debian 12+, Fedora, Mint 21+); x86-64 or arm64.
+- **Settings popover placement:** it opens in the screen corner next to the tray and closes when you click away (or press Esc). On Wayland the compositor decides where windows go, so there it opens centered.
 - **Tray icon:** needs a StatusNotifierItem host. KDE, Cinnamon, XFCE, and most bars (waybar, etc.) have one; GNOME needs the *AppIndicator and KStatusNotifierItem Support* extension (preinstalled on Ubuntu). Without a tray, Hotfix still monitors and can be configured through `config.json`.
 - **Protect Active App** needs a way to ask which window is focused: it works on X11 (with `xdotool` or `xprop` installed), sway, and Hyprland. GNOME and KDE **Wayland** sessions don't expose this, so there only XWayland apps are detected — add apps you never want killed to the whitelist instead.
 - **Kill on Sleep** uses systemd-logind; it does nothing on non-systemd distros.

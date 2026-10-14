@@ -78,3 +78,12 @@ echo "Start it now from your app menu, or run:  $exe &"
 echo
 echo "Note: Hotfix lives in the system tray. On GNOME, tray icons need the"
 echo "\"AppIndicator and KStatusNotifierItem Support\" extension (preinstalled on Ubuntu)."
+
+# The settings window renders with WebKitGTK 4.1; the tray works without it.
+if ! { ldconfig -p 2>/dev/null || /sbin/ldconfig -p 2>/dev/null; } | grep -q 'libwebkit2gtk-4\.1\.so\.0'; then
+    echo
+    echo "Note: the Settings window needs WebKitGTK 4.1, which isn't installed. Install it with"
+    echo "  sudo apt install libwebkit2gtk-4.1-0    (Ubuntu, Debian, Mint)"
+    echo "  sudo dnf install webkit2gtk4.1          (Fedora)"
+    echo "Until then, Settings opens the config file instead."
+fi

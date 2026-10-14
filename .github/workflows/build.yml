@@ -133,8 +133,27 @@ jobs:
           files: |
             dist/Hotfix-${{ github.event.release.tag_name }}-macOS.dmg
 
+  # One job per CPU, each on a native runner. Ubuntu 22.04 (glibc 2.35) so the
+  # app runs on 22.04 and newer, Debian 12, Fedora, etc.
   build-linux:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            goarch: amd64
+            runner: ubuntu-22.04
+            nfpm_sha256: 6d7f9a28b2f397934403950fcbba83f598b08d02edbe79a0815b3b4897341750
+          - arch: arm64
+            goarch: arm64
+            runner: ubuntu-22.04-arm
+            nfpm_sha256: a9a75213763783b7669719e505474c748c5ad7dc66591a195619deb50f85c2f4
+    runs-on: ${{ matrix.runner }}
+    env:
+      # The settings window's webview library, built from pinned source (the
+      # tarball's checksum is verified) rather than taken prebuilt from anyone.
+      WEBVIEW_VERSION: 0.12.0
+      WEBVIEW_SHA256: e2c8d0bed3fcd13e624074448b7d3b1d0b0d03546a15839f17ee0013f2cba1db
 
     steps:
       - uses: actions/checkout@v6
@@ -144,6 +163,31 @@ jobs:
           go-version-file: linux/go.mod
           cache-dependency-path: linux/go.sum
 
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq g++ pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev \
+            xvfb desktop-file-utils rpm
+
+      # libwebview.so renders the settings window (the same page as the Windows
+      # app) with WebKitGTK 4.1. It goes into linux/webviewlib/, where `go build`
+      # embeds it (linux/webviewlib.go); the app loads it at runtime via purego,
+      # so the Go build itself stays CGO-free.
+      - name: Build webview library
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/webview.tar.gz" \
+            "https://github.com/webview/webview/archive/refs/tags/${WEBVIEW_VERSION}.tar.gz"
+          echo "${WEBVIEW_SHA256}  $RUNNER_TEMP/webview.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/webview.tar.gz" -C "$RUNNER_TEMP"
+          src="$RUNNER_TEMP/webview-${WEBVIEW_VERSION}"
+          g++ -std=c++11 -O2 -fPIC -shared -DWEBVIEW_BUILD_SHARED \
+            -I"$src/core/include" "$src/core/src/webview.cc" \
+            $(pkg-config --cflags --libs gtk+-3.0 webkit2gtk-4.1) \
+            -Wl,-soname,libwebview.so -Wl,--as-needed \
+            -o linux/webviewlib/libwebview.so
+          objdump -p linux/webviewlib/libwebview.so | grep -E 'SONAME|NEEDED'
+          nm -D --defined-only linux/webviewlib/libwebview.so | grep -E ' webview_(create|bind|return)$'
+
       - name: Vet and test
         run: |
           cd linux
@@ -152,10 +196,11 @@ jobs:
 
       # The licensing backend (worker/src/license.js) the Linux app talks to.
       - name: Test licensing API
+        if: matrix.arch == 'x86_64'
         run: node --test worker/test/license.test.mjs
 
-      # Pure Go (no CGO): static binaries, so arm64 cross-compiles on the x64
-      # runner and the result runs on any distro regardless of libc.
+      # CGO_ENABLED=0: no C toolchain in the Go build; purego dynamically links
+      # only the system C library and loads WebKitGTK when the window opens.
       #
       # The subscription check is compiled in by stamping the license public key
       # (repo variable LICENSE_PUBLIC_KEY — see worker/README.md) into the
@@ -171,23 +216,32 @@ jobs:
             echo "::error::Repo variable LICENSE_PUBLIC_KEY is not set; refusing to release a Linux build without license enforcement."
             exit 1
           fi
+          mkdir -p "dist/linux-${{ matrix.arch }}"
           cd linux
-          for target in amd64:x86_64 arm64:arm64; do
-            mkdir -p "../dist/linux-${target##*:}"
-            GOARCH="${target%%:*}" go build -trimpath \
-              -ldflags "-s -w -X main.licensePublicKey=${LICENSE_PUBLIC_KEY}" \
-              -o "../dist/linux-${target##*:}/hotfix" .
-          done
-          version="$(../dist/linux-x86_64/hotfix --version)"
+          GOARCH="${{ matrix.goarch }}" go build -trimpath \
+            -ldflags "-s -w -X main.licensePublicKey=${LICENSE_PUBLIC_KEY}" \
+            -o "../dist/linux-${{ matrix.arch }}/hotfix" .
+          version="$(../dist/linux-${{ matrix.arch }}/hotfix --version)"
           echo "$version"
           if [ -n "$LICENSE_PUBLIC_KEY" ] && echo "$version" | grep -q "dev build"; then
             echo "::error::License public key was not compiled into the binary."
             exit 1
           fi
 
-      # Per CPU: the raw binary (consumed by the in-place auto-updater), a .deb
-      # and .rpm (double-click installers, the Linux counterpart of Setup.exe —
-      # see linux/packaging/nfpm.yaml), and a .tar.gz with install.sh (per-user
+      # Opens the real settings window under a virtual display, drives the page
+      # through its bindings (load, save, a rejected save, log), and checks
+      # what it shows and what got saved. See runSettingsWindow in
+      # linux/settings_window.go.
+      - name: Test settings window
+        env:
+          WEBKIT_DISABLE_COMPOSITING_MODE: 1
+        run: |
+          export XDG_CONFIG_HOME="$(mktemp -d)" XDG_STATE_HOME="$(mktemp -d)" XDG_RUNTIME_DIR="$(mktemp -d)"
+          xvfb-run -a "dist/linux-${{ matrix.arch }}/hotfix" --settings-selftest
+
+      # The raw binary (consumed by the in-place auto-updater), a .deb and .rpm
+      # (double-click installers, the Linux counterpart of Setup.exe — see
+      # linux/packaging/nfpm.yaml), and a .tar.gz with install.sh (per-user
       # install for any other distro).
       - name: Package
         env:
@@ -196,7 +250,7 @@ jobs:
           # checksums.txt). Not `go install`: that needs a newer Go than the
           # 1.22 this job builds the app with.
           NFPM_VERSION: 2.48.0
-          NFPM_SHA256: 6d7f9a28b2f397934403950fcbba83f598b08d02edbe79a0815b3b4897341750
+          NFPM_SHA256: ${{ matrix.nfpm_sha256 }}
         run: |
           if [ -n "$TAG" ]; then
             pkgver="${TAG#v}"
@@ -205,43 +259,39 @@ jobs:
           fi
           echo "package version: $pkgver"
           curl -fsSL -o "$RUNNER_TEMP/nfpm.tar.gz" \
-            "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz"
+            "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_Linux_${{ matrix.arch }}.tar.gz"
           echo "${NFPM_SHA256}  $RUNNER_TEMP/nfpm.tar.gz" | sha256sum -c -
           tar -xzf "$RUNNER_TEMP/nfpm.tar.gz" -C "$RUNNER_TEMP" nfpm
           nfpm="$RUNNER_TEMP/nfpm"
           "$nfpm" --version | grep -i gitversion
 
-          for target in amd64:x86_64 arm64:arm64; do
-            goarch="${target%%:*}"; arch="${target##*:}"
-            name="Hotfix-${TAG:-dev}-Linux-${arch}"
+          arch="${{ matrix.arch }}"
+          name="Hotfix-${TAG:-dev}-Linux-${arch}"
 
-            install -D -m 755 "dist/linux-${arch}/hotfix" dist/nfpm/hotfix
-            for fmt in deb rpm; do
-              ARCH="$goarch" VERSION="$pkgver" \
-                "$nfpm" package -f linux/packaging/nfpm.yaml -p "$fmt" -t "dist/${name}.${fmt}"
-            done
-            rm -rf dist/nfpm
-
-            mkdir -p "dist/${name}"
-            cp "dist/linux-${arch}/hotfix" "dist/${name}/hotfix"
-            cp linux/packaging/install.sh linux/packaging/uninstall.sh "dist/${name}/"
-            cp icon/AppIcon.svg "dist/${name}/hotfix.svg"
-            chmod 755 "dist/${name}/hotfix" "dist/${name}/install.sh" "dist/${name}/uninstall.sh"
-            tar -C dist -czf "dist/${name}.tar.gz" "${name}"
-            rm -rf "dist/${name}"
-            cp "dist/linux-${arch}/hotfix" "dist/${name}"
+          install -D -m 755 "dist/linux-${arch}/hotfix" dist/nfpm/hotfix
+          for fmt in deb rpm; do
+            ARCH="${{ matrix.goarch }}" VERSION="$pkgver" \
+              "$nfpm" package -f linux/packaging/nfpm.yaml -p "$fmt" -t "dist/${name}.${fmt}"
           done
+          rm -rf dist/nfpm
+
+          mkdir -p "dist/${name}"
+          cp "dist/linux-${arch}/hotfix" "dist/${name}/hotfix"
+          cp linux/packaging/install.sh linux/packaging/uninstall.sh "dist/${name}/"
+          cp icon/AppIcon.svg "dist/${name}/hotfix.svg"
+          chmod 755 "dist/${name}/hotfix" "dist/${name}/install.sh" "dist/${name}/uninstall.sh"
+          tar -C dist -czf "dist/${name}.tar.gz" "${name}"
+          rm -rf "dist/${name}"
+          cp "dist/linux-${arch}/hotfix" "dist/${name}"
           ls -la dist/
 
-      # Install the x86_64 .deb on the runner the way a user would, check what
-      # landed where, then remove it again. Also sanity-check the .rpm metadata.
+      # Install the .deb on the runner the way a user would, check what landed
+      # where, then remove it again. Also sanity-check the .rpm metadata.
       - name: Test packages
         env:
           TAG: ${{ github.event.release.tag_name }}
         run: |
-          name="Hotfix-${TAG:-dev}-Linux-x86_64"
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq desktop-file-utils rpm
+          name="Hotfix-${TAG:-dev}-Linux-${{ matrix.arch }}"
           desktop-file-validate linux/packaging/hotfix.desktop
 
           dpkg-deb --info "dist/${name}.deb"
@@ -255,12 +305,13 @@ jobs:
           test ! -e /usr/bin/hotfix
 
           rpm -qip "dist/${name}.rpm"
+          rpm -qRp "dist/${name}.rpm" | grep -q 'libwebkit2gtk-4.1.so.0'
           rpm -qlp "dist/${name}.rpm" | grep -qx /usr/bin/hotfix
 
       - name: Upload artifact (all runs)
         uses: actions/upload-artifact@v7
         with:
-          name: Hotfix-Linux
+          name: Hotfix-Linux-${{ matrix.arch }}
           path: dist/Hotfix-*-Linux-*
 
       - name: Upload to release
@@ -268,14 +319,10 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           files: |
-            dist/Hotfix-${{ github.event.release.tag_name }}-Linux-x86_64
-            dist/Hotfix-${{ github.event.release.tag_name }}-Linux-x86_64.deb
-            dist/Hotfix-${{ github.event.release.tag_name }}-Linux-x86_64.rpm
-            dist/Hotfix-${{ github.event.release.tag_name }}-Linux-x86_64.tar.gz
-            dist/Hotfix-${{ github.event.release.tag_name }}-Linux-arm64
-            dist/Hotfix-${{ github.event.release.tag_name }}-Linux-arm64.deb
-            dist/Hotfix-${{ github.event.release.tag_name }}-Linux-arm64.rpm
-            dist/Hotfix-${{ github.event.release.tag_name }}-Linux-arm64.tar.gz
+            dist/Hotfix-${{ github.event.release.tag_name }}-Linux-${{ matrix.arch }}
+            dist/Hotfix-${{ github.event.release.tag_name }}-Linux-${{ matrix.arch }}.deb
+            dist/Hotfix-${{ github.event.release.tag_name }}-Linux-${{ matrix.arch }}.rpm
+            dist/Hotfix-${{ github.event.release.tag_name }}-Linux-${{ matrix.arch }}.tar.gz
 
   # On every release, rewrite the site's download buttons to the new
   # version+OS-named assets and push the change back to main (GitHub Pages

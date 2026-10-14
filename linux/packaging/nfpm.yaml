@@ -27,6 +27,16 @@ description: |-
   Hotfix sits in the system tray, watches CPU usage, and terminates any
   process that stays above a threshold for too long.
 
+# The settings window renders with WebKitGTK 4.1 (linux/webview.go). The rpm
+# names it by library soname, which works on Fedora and openSUSE alike.
+overrides:
+  deb:
+    depends:
+      - libwebkit2gtk-4.1-0
+  rpm:
+    depends:
+      - libwebkit2gtk-4.1.so.0()(64bit)
+
 # Optional extras: the GNOME tray-icon extension (Ubuntu ships it already) and
 # xdotool, which lets "Protect Active App" find the focused window on X11.
 suggests:
