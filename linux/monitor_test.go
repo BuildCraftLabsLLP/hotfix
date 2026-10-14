@@ -154,6 +154,36 @@ func TestEvaluate_Exclusions(t *testing.T) {
 	}
 }
 
+// The settings window and its WebKit helpers are Hotfix's own children; a CPU
+// spike while the page loads must never get them killed.
+func TestEvaluate_SkipsOwnProcessTree(t *testing.T) {
+	resetMonitorState(t, nil)
+	settings := processEntry{PID: 7000, PPID: selfPID, Name: "hotfix", CPU: 99, UID: selfUID, StartTime: 1}
+	webkit := processEntry{PID: 7001, PPID: 7000, Name: "WebKitWebProces", CPU: 99, UID: selfUID, StartTime: 1}
+	other := own(8000, "node", 99)
+	entries := []processEntry{settings, webkit, other}
+
+	t0 := time.Now()
+	runEvaluate(entries, testCfg(), 0, t0)
+	kills := runEvaluate(entries, testCfg(), 0, t0.Add(2*time.Minute))
+	if len(kills) != 1 || kills[0].PID != 8000 {
+		t.Fatalf("only the unrelated process should be killed, got %+v", kills)
+	}
+}
+
+func TestIsDescendant(t *testing.T) {
+	parents := map[int]int{10: 1, 20: 10, 30: 20, 40: 1, 50: 50}
+	if !isDescendant(30, 10, parents) || !isDescendant(20, 10, parents) {
+		t.Error("children and grandchildren are descendants")
+	}
+	if isDescendant(10, 10, parents) || isDescendant(40, 10, parents) || isDescendant(99, 10, parents) {
+		t.Error("self, unrelated and unknown processes are not descendants")
+	}
+	if isDescendant(50, 10, parents) {
+		t.Error("a parent-link cycle must terminate")
+	}
+}
+
 func TestEvaluate_SkipsOtherUsersUnlessRoot(t *testing.T) {
 	if selfUID == 0 {
 		t.Skip("running as root: other users' processes are fair game")

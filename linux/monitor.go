@@ -172,6 +172,13 @@ func checkProcesses() {
 func evaluate(entries []processEntry, cfg Config, protectPID int, now time.Time) []*HotProcess {
 	wl := nameSet(cfg.Whitelist)
 
+	// Parent links for spotting Hotfix's own process tree — the settings
+	// window and the WebKit processes it starts, which can spike while loading.
+	parents := make(map[int]int, len(entries))
+	for _, e := range entries {
+		parents[e.PID] = e.PPID
+	}
+
 	var toKill []*HotProcess
 	// Build new set of hot pids so we can evict cooled-down entries.
 	hotThisCycle := map[int]bool{}
@@ -181,7 +188,7 @@ func evaluate(entries []processEntry, cfg Config, protectPID int, now time.Time)
 			continue
 		}
 		// PID 1/2 and kernel threads (children of kthreadd) are never candidates.
-		if e.PID <= 2 || e.PPID == 2 || e.PID == selfPID {
+		if e.PID <= 2 || e.PPID == 2 || e.PID == selfPID || isDescendant(e.PID, selfPID, parents) {
 			continue
 		}
 		// Without root we can only signal our own processes; skip the rest
@@ -244,6 +251,22 @@ func evaluate(entries []processEntry, cfg Config, protectPID int, now time.Time)
 	}
 
 	return toKill
+}
+
+// isDescendant reports whether pid is a child, grandchild, … of ancestor,
+// following parent links (bounded, in case of a stale cycle).
+func isDescendant(pid, ancestor int, parents map[int]int) bool {
+	for i := 0; i < 64; i++ {
+		p, ok := parents[pid]
+		if !ok || p <= 1 {
+			return false
+		}
+		if p == ancestor {
+			return true
+		}
+		pid = p
+	}
+	return false
 }
 
 // displayName returns a human-friendly name for logs and notifications: the
