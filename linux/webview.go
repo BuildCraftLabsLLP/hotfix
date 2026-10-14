@@ -147,8 +147,10 @@ func onDispatch(_, arg uintptr) uintptr {
 }
 
 // onBind runs on the UI thread for every call to a bound function. The id and
-// request strings are only valid during the callback, so they're copied, and
-// the reply is sent before returning. A failure rejects the page's promise
+// request strings are only valid during the callback, so they're copied; the
+// function then runs on its own goroutine — so slow work (sampling CPU for the
+// running-apps list) never freezes the window — and replies through
+// webview_return, which is thread-safe. A failure rejects the page's promise
 // with {message}, which the settings page displays.
 func onBind(idPtr, reqPtr, arg uintptr) uintptr {
 	id, req := goString(idPtr), goString(reqPtr)
@@ -158,7 +160,12 @@ func onBind(idPtr, reqPtr, arg uintptr) uintptr {
 	if !ok {
 		return 0
 	}
+	go reply(b, id, req)
+	return 0
+}
 
+// reply runs a bound function and sends its result back to the page.
+func reply(b binding, id, req string) {
 	value, err := func() (v any, err error) {
 		defer func() {
 			if r := recover(); r != nil {
@@ -186,7 +193,6 @@ func onBind(idPtr, reqPtr, arg uintptr) uintptr {
 		status, result = 1, string(data)
 	}
 	wv.ret(b.w, id, status, result)
-	return 0
 }
 
 // goString copies a NUL-terminated C string.

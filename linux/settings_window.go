@@ -144,6 +144,9 @@ func bindSettingsAPI(w *webView) {
 	w.Bind("hotfixCheckUpdates", func([]json.RawMessage) (any, error) {
 		return nil, signalTray(syscall.SIGUSR1)
 	})
+	w.Bind("hotfixListProcesses", func([]json.RawMessage) (any, error) {
+		return listRunningApps()
+	})
 	w.Bind("hotfixOpenLog", func([]json.RawMessage) (any, error) {
 		path := logFilePath()
 		if path == "" {
@@ -340,6 +343,12 @@ window.addEventListener('load', function () {
         r.rejected = String((e && e.message) || e);
       }
       r.log = typeof (await hotfixGetLog());
+      var apps = await hotfixListProcesses();
+      r.apps = Array.isArray(apps) ? apps.length : -1;
+      // Open the exclusions dropdown the way a click does, and count its rows.
+      document.getElementById('wl-input').dispatchEvent(new MouseEvent('click'));
+      await new Promise(function (done) { setTimeout(done, 2000); });
+      r.menuOptions = document.querySelectorAll('#wl-menu .wl-option').length;
     } catch (e) {
       r.error = String((e && e.message) || e);
     }
@@ -356,6 +365,8 @@ type selfTestReport struct {
 	ConfigThreshold float64 `json:"configThreshold"`
 	Rejected        string  `json:"rejected"`
 	Log             string  `json:"log"`
+	Apps            int     `json:"apps"`
+	MenuOptions     int     `json:"menuOptions"`
 	Error           string  `json:"error"`
 }
 
@@ -414,6 +425,8 @@ func (st *selfTest) finish() int {
 	check(r.CPU == strconv.Itoa(int(r.ConfigThreshold)), "CPU slider doesn't show the loaded threshold")
 	check(r.Rejected != "", "an invalid save was not rejected")
 	check(r.Log == "string", "hotfixGetLog")
+	check(r.Apps > 0, "hotfixListProcesses returned no running apps")
+	check(r.MenuOptions > 0, "the exclusions dropdown showed no running apps")
 	check(err == nil && saved.CPUThreshold == 65, "hotfixSaveConfig didn't save the new threshold")
 	if len(problems) > 0 {
 		fmt.Println("settings self-test: FAIL —", strings.Join(problems, "; "))

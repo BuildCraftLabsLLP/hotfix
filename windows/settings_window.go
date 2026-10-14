@@ -138,6 +138,7 @@ func bindSettingsAPI(w webview2.WebView) {
 	_ = w.Bind("hotfixGetLog", func() (string, error) { return readLogText(), nil })
 	_ = w.Bind("hotfixCheckUpdates", func() error { safeGo("update", func() { checkForUpdates(false) }); return nil })
 	_ = w.Bind("hotfixOpenLog", func() error { return openLogExternally() })
+	_ = w.Bind("hotfixListProcesses", func() ([]runningApp, error) { return listRunningApps() })
 }
 
 // applySavedConfig validates cfg, persists it, and starts/stops the monitor to

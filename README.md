@@ -41,7 +41,7 @@ Claude extensions, AI tools, and background daemons run rogue — consuming 50�
 - **Configurable threshold** — Set the CPU % that triggers monitoring (default: 80%)
 - **Configurable duration** — How long a process must be hot before being killed (default: 60s)
 - **Kill on sleep** — Optionally terminate hot processes when the machine sleeps
-- **Exclusion list** — Protect specific processes from ever being killed
+- **Exclusion list** — Protect specific processes from ever being killed: type a name, or pick from a dropdown of the apps running right now (busiest first, with their CPU use)
 - **Desktop notifications** — A notification fires whenever a process is terminated
 - **Activity logs** — Events are written to a log file and viewable in-app from Settings (macOS: `~/Library/Logs/Hotfix/hotfix.log`, Windows: `%APPDATA%\Hotfix\hotfix.log`, Linux: `~/.local/state/hotfix/hotfix.log`, opened from the tray's **View Log**)
 - **Silent auto-updates** — New versions are downloaded and installed in the background, then the app relaunches — no prompts
