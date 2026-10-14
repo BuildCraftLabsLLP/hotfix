@@ -7,6 +7,9 @@ struct SettingsView: View {
     @State private var newExclusion: String = ""
     @State private var showExclusionError: Bool = false
     @State private var logText: String = ""
+    @StateObject private var appCatalog = AppCatalogModel()
+    @State private var showAppMenu: Bool = false
+    @State private var hoveredApp: String?
 
     var body: some View {
         ZStack {
@@ -212,22 +215,43 @@ struct SettingsView: View {
                     .foregroundStyle(Color(hex: "141416").opacity(0.45))
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                // Add new exclusion
+                // Add new exclusion: type a process name, or pick an app from
+                // the dropdown (running apps, then installed ones).
                 HStack(spacing: 8) {
-                    TextField("Process name (e.g. Xcode)", text: $newExclusion)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 12, design: .rounded))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 7)
-                        .background(
-                            RoundedRectangle(cornerRadius: 7)
-                                .fill(Color(hex: "F6F4F0"))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 7)
-                                        .strokeBorder(Color(hex: "141416").opacity(0.12), lineWidth: 1)
-                                )
-                        )
-                        .onSubmit { addExclusion() }
+                    HStack(spacing: 4) {
+                        TextField("Process name, or pick an app", text: $newExclusion)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 12, design: .rounded))
+                            .onSubmit { addExclusion() }
+                            .onExitCommand { showAppMenu = false }
+
+                        Button(action: toggleAppMenu) {
+                            Image(systemName: showAppMenu ? "chevron.up" : "chevron.down")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(showAppMenu ? Color(hex: "C9461E") : Color(hex: "141416").opacity(0.45))
+                                .frame(width: 20, height: 20)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help("Pick from running and installed apps")
+                    }
+                    .padding(.leading, 10)
+                    .padding(.trailing, 4)
+                    .padding(.vertical, 4)
+                    .background(
+                        RoundedRectangle(cornerRadius: 7)
+                            .fill(Color(hex: "F6F4F0"))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 7)
+                                    .strokeBorder(
+                                        showAppMenu ? Color(hex: "C9461E").opacity(0.40) : Color(hex: "141416").opacity(0.12),
+                                        lineWidth: 1
+                                    )
+                            )
+                    )
+                    .onChange(of: newExclusion) { text in
+                        if !text.isEmpty && !showAppMenu { openAppMenu() }
+                    }
 
                     Button(action: addExclusion) {
                         Text("Add")
@@ -241,6 +265,10 @@ struct SettingsView: View {
                             )
                     }
                     .buttonStyle(.plain)
+                }
+
+                if showAppMenu {
+                    appMenu
                 }
 
                 if showExclusionError {
@@ -296,6 +324,138 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Apps dropdown (Exclusions)
+    /// The running apps (busiest first, with CPU use) and the other installed
+    /// apps, filtered by what's typed in the box. Picking one adds its process
+    /// name to the exclusions.
+    @ViewBuilder
+    private var appMenu: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if let entries = appCatalog.entries {
+                let shown = AppCatalog.filter(entries, query: newExclusion)
+                let running = shown.filter { $0.running }
+                let installed = shown.filter { !$0.running }
+                if shown.isEmpty {
+                    menuNote(newExclusion.trimmingCharacters(in: .whitespaces).isEmpty
+                        ? "No apps found."
+                        : "No app matches — press Return to add \u{201C}\(newExclusion.trimmingCharacters(in: .whitespaces))\u{201D}.")
+                } else {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            if !running.isEmpty {
+                                menuHeader("Running now")
+                                ForEach(running) { appRow($0) }
+                            }
+                            if !installed.isEmpty {
+                                menuHeader("Installed")
+                                ForEach(installed) { appRow($0) }
+                            }
+                        }
+                        .padding(4)
+                    }
+                    .frame(maxHeight: 240)
+                }
+            } else {
+                menuNote("Loading apps…")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.white)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(Color(hex: "141416").opacity(0.10), lineWidth: 1)
+                )
+                .shadow(color: Color(hex: "141416").opacity(0.08), radius: 8, y: 4)
+        )
+    }
+
+    private func menuHeader(_ title: String) -> some View {
+        Text(title.uppercased())
+            .font(.system(size: 9, weight: .bold, design: .rounded))
+            .tracking(0.8)
+            .foregroundStyle(Color(hex: "141416").opacity(0.40))
+            .padding(.horizontal, 10)
+            .padding(.top, 8)
+            .padding(.bottom, 4)
+    }
+
+    private func menuNote(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 11, design: .rounded).italic())
+            .foregroundStyle(Color(hex: "141416").opacity(0.45))
+            .padding(10)
+    }
+
+    private func appRow(_ app: AppEntry) -> some View {
+        let added = prefs.whitelist.contains(app.name)
+        let hot = app.running && !added && app.cpu >= prefs.cpuThreshold
+        let label = app.label.flatMap { $0.caseInsensitiveCompare(app.name) == .orderedSame ? nil : $0 }
+        let meta = added ? "Excluded" : (app.running ? "\(Int(app.cpu.rounded()))% CPU" : "")
+
+        return Button(action: { pickApp(app.name) }) {
+            HStack(spacing: 8) {
+                if let label {
+                    Text(label)
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Color(hex: "141416"))
+                        .lineLimit(1)
+                    Text(app.name)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(Color(hex: "141416").opacity(0.45))
+                        .lineLimit(1)
+                } else {
+                    Text(app.name)
+                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(Color(hex: "141416"))
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                Text(meta)
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundStyle(hot ? Color(hex: "C9461E") : Color(hex: "141416").opacity(0.45))
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(hoveredApp == app.name && !added ? Color(hex: "EDEAE5") : Color.clear)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(added)
+        .opacity(added ? 0.5 : 1)
+        .onHover { inside in
+            if inside {
+                hoveredApp = app.name
+            } else if hoveredApp == app.name {
+                hoveredApp = nil
+            }
+        }
+    }
+
+    private func openAppMenu() {
+        showAppMenu = true
+        appCatalog.refresh()
+    }
+
+    private func toggleAppMenu() {
+        if showAppMenu {
+            showAppMenu = false
+        } else {
+            openAppMenu()
+        }
+    }
+
+    private func pickApp(_ name: String) {
+        prefs.addToWhitelist(name)
+        newExclusion = ""
+        showExclusionError = false
+        showAppMenu = false
     }
 
     // MARK: - Logs section
@@ -470,6 +630,7 @@ struct SettingsView: View {
         showExclusionError = false
         prefs.addToWhitelist(trimmed)
         newExclusion = ""
+        showAppMenu = false
     }
 }
 
