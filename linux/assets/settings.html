@@ -478,6 +478,7 @@
       border: 1px solid var(--border);
       border-radius: var(--radius-sm);
       box-shadow: 0 8px 24px rgba(20,20,22,0.12);
+      scroll-margin-bottom: 84px; /* keep it clear of the fixed save bar */
     }
 
     .wl-menu[hidden] {
@@ -1120,6 +1121,13 @@
 
   function renderAppMenu() {
     if (!isMenuOpen()) return;
+    renderMenuContent();
+    // The box sits low on the page: scroll so the whole list shows above the
+    // save bar (a no-op when it already does).
+    $wlMenu.scrollIntoView({ block: 'nearest' });
+  }
+
+  function renderMenuContent() {
     $wlMenu.innerHTML = '';
     menuOptions = [];
 

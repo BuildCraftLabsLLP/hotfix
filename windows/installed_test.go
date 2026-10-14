@@ -169,7 +169,7 @@ func TestShortcutApp(t *testing.T) {
 }
 
 func TestMergeApps(t *testing.T) {
-	running := []runningApp{{Name: "chrome", CPU: 40}, {Name: "notepad", CPU: 1}}
+	running := []runningApp{{Name: "chrome", CPU: 40}, {Name: "notepad", CPU: 1}, {Name: "RuntimeBroker", CPU: 0}}
 	installed := []installedApp{
 		{Name: "blender", Label: "Blender"},
 		{Name: "Chrome", Label: "Google Chrome"}, // running: labels it, not listed again

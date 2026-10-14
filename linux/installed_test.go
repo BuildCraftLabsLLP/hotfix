@@ -130,7 +130,7 @@ func TestInstalledApps_ScansXDGDirs(t *testing.T) {
 }
 
 func TestMergeApps(t *testing.T) {
-	running := []runningApp{{Name: "firefox", CPU: 40}, {Name: "bash", CPU: 1}}
+	running := []runningApp{{Name: "firefox", CPU: 40}, {Name: "bash", CPU: 1}, {Name: "(sd-pam)", CPU: 0}}
 	installed := []installedApp{
 		{Name: "blender", Label: "Blender"},
 		{Name: "Firefox", Label: "Firefox Web Browser"}, // running: labels it, not listed again

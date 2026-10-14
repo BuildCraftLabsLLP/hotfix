@@ -184,8 +184,15 @@ func listApps() ([]appEntry, error) {
 	return mergeApps(running, cachedInstalledApps()), nil
 }
 
+// minListedCPU is the CPU use (percent) at which a running process with no
+// installed app behind it still makes the list: busy enough to matter.
+const minListedCPU = 0.5
+
 // mergeApps combines the running and installed lists: a running app gets its
 // installed label, and an installed app that's running isn't listed twice.
+// Running processes that are neither a known installed app nor using CPU are
+// left out — background helpers that would bury the apps people look for
+// (they can still be excluded by typing their name).
 func mergeApps(running []runningApp, installed []installedApp) []appEntry {
 	labels := make(map[string]string, len(installed))
 	for _, a := range installed {
@@ -197,6 +204,9 @@ func mergeApps(running []runningApp, installed []installedApp) []appEntry {
 	listed := make(map[string]bool, len(running))
 	for _, r := range running {
 		key := strings.ToLower(r.Name)
+		if labels[key] == "" && r.CPU < minListedCPU {
+			continue
+		}
 		listed[key] = true
 		out = append(out, appEntry{Name: r.Name, Label: labels[key], CPU: r.CPU, Running: true})
 	}
