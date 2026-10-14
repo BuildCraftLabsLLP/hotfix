@@ -22,11 +22,11 @@ Claude extensions, AI tools, and background daemons run rogue — consuming 50�
 |----------|----------|-------------|
 | **macOS** | [Hotfix.dmg](https://github.com/buildcraftlabs/hotfix/releases/latest) | macOS 13+ · Apple Silicon or Intel |
 | **Windows** | [Hotfix-Setup.exe](https://github.com/buildcraftlabs/hotfix/releases/latest) | Windows 11 · x64 |
-| **Linux** _(test build)_ | [Hotfix-dev-Linux-x86_64.tar.gz](https://github.com/VarunSharma13/hotfix/releases/tag/linux-test-v1.0.12) | x86-64 or arm64 · a desktop with a system tray |
+| **Linux** _(test build)_ | [Hotfix-dev-Linux-x86_64.deb](https://github.com/VarunSharma13/hotfix/releases/tag/linux-test-v1.0.12) (also `.rpm`, `.tar.gz`) | x86-64 or arm64 · a desktop with a system tray |
 
 > **Windows:** the installer is per-user (no admin) — it installs to `%LOCALAPPDATA%\Programs\Hotfix`, adds an uninstaller to **Apps & features**, and updates itself silently in the background. Delete the downloaded `Hotfix-Setup.exe` once it's installed.
 
-> **Linux (test build):** not an official release yet — a pre-release from this fork, built from the [`linux-port`](https://github.com/VarunSharma13/hotfix/tree/linux-port) branch. Download the tarball for your CPU, then run `tar -xzf Hotfix-dev-Linux-x86_64.tar.gz && cd Hotfix-dev-Linux-x86_64 && ./install.sh`. It installs per-user to `~/.local/bin/hotfix` (no root) and adds **Hotfix** to the app menu; `./uninstall.sh` removes it. On GNOME, tray icons need the AppIndicator extension (built into Ubuntu).
+> **Linux (test build):** not an official release yet — a pre-release from this fork, built from the [`linux-port`](https://github.com/VarunSharma13/hotfix/tree/linux-port) branch. On Ubuntu, Debian or Mint, download the `.deb` and double-click it to install (or `sudo apt install ./Hotfix-dev-Linux-x86_64.deb`); Hotfix then appears in the app menu. Fedora/openSUSE: use the `.rpm`. Any other distro: extract the `.tar.gz` and run `./install.sh` (no root). On GNOME, tray icons need the AppIndicator extension (built into Ubuntu).
 
 > **macOS:** Not yet notarized — right-click → **Open** on first launch to bypass Gatekeeper.
 
