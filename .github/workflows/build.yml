@@ -252,10 +252,12 @@ jobs:
           NFPM_VERSION: 2.48.0
           NFPM_SHA256: ${{ matrix.nfpm_sha256 }}
         run: |
+          # Non-release builds get the run number (1.0.12-dev.42 → 1.0.12~dev.42),
+          # so each test build installs as an upgrade over the previous one.
           if [ -n "$TAG" ]; then
             pkgver="${TAG#v}"
           else
-            pkgver="$(sed -n 's/^[[:space:]]*currentVersion *= *"\(.*\)"/\1/p' linux/updater.go)-dev"
+            pkgver="$(sed -n 's/^[[:space:]]*currentVersion *= *"\(.*\)"/\1/p' linux/updater.go)-dev.${GITHUB_RUN_NUMBER}"
           fi
           echo "package version: $pkgver"
           curl -fsSL -o "$RUNNER_TEMP/nfpm.tar.gz" \
