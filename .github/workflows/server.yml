@@ -259,7 +259,7 @@ jobs:
           sleep 6
           hotfixd status | tee /tmp/st.txt
           grep -q "Service:   running" /tmp/st.txt
-          sudo hotfixd install | grep -qi "running"   # with the packaged unit: no second unit
+          sudo HOTFIXD_ALLOW_DEV_INSTALL=1 hotfixd install | grep -qi "running"   # with the packaged unit: no second unit
           test ! -e /etc/systemd/system/hotfixd.service
           sudo apt-get remove -y hotfix-server
           ! systemctl is-active hotfixd
