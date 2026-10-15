@@ -201,11 +201,21 @@ test("verify: a subscription set up during the trial (authenticated) unlocks", a
 test("verify: created / pending / halted / cancelled are inactive once the trial is over", async () => {
   await trialStarted(FP, 30);
   for (const status of ["created", "pending", "halted", "cancelled", "completed", "expired", "paused"]) {
-    await env.HOTFIX_LICENSE.put(`lic:${FP}`, JSON.stringify({ subscription_id: "sub_1", status }));
+    await env.HOTFIX_LICENSE.put(`lic:${FP}`, JSON.stringify({ subscription_id: "sub_1", status, current_period_end: now() - 86400 }));
     const claims = await verifyClaims(FP);
     assert.equal(claims.status, "inactive", status);
     assert.equal(claims.plan, "lapsed", status);
   }
+});
+
+test("verify: cancelled during the trial, before any charge, ends as an expired trial", async () => {
+  // The subscription's only date is its never-taken first charge, at the trial's end.
+  await trialStarted(FP, 8);
+  const trialEnd = now() - 86400;
+  await env.HOTFIX_LICENSE.put(`lic:${FP}`, JSON.stringify({ subscription_id: "sub_1", status: "cancelled", current_period_end: trialEnd }));
+  const claims = await verifyClaims(FP);
+  assert.equal(claims.status, "inactive");
+  assert.equal(claims.plan, "trial_expired");
 });
 
 // --- checkout ---

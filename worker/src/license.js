@@ -95,9 +95,12 @@ async function verify(env, url) {
   const trialEnd = await machineTrialEnd(env, fp, now);
 
   // plan: "subscription" (paid), "trial" (free week), or why it may not run:
-  // "trial_expired" (never subscribed) / "lapsed" (subscription ended).
+  // "lapsed" (a subscription that paid for time past the trial has ended) or
+  // "trial_expired" (never paid — including a subscription set up during the
+  // trial and cancelled before its first charge).
   let status = "inactive";
-  let plan = rec ? "lapsed" : "trial_expired";
+  const paidPastTrial = rec && (rec.current_period_end || 0) > trialEnd;
+  let plan = paidPastTrial ? "lapsed" : "trial_expired";
   let exp = now + TOKEN_TTL;
   if (rec && ACTIVE.has(rec.status)) {
     status = "active";
