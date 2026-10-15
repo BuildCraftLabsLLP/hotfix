@@ -24,14 +24,16 @@ id = "5c5410d8e9844d39ad86217c0bcc235d"
 binding = "HOTFIX_LICENSE"
 id = "REPLACE_WITH_HOTFIX_LICENSE_NAMESPACE_ID"
 
-# Licensing secrets — required for /license/* (set with `wrangler secret put <NAME>`):
-#   STRIPE_SECRET_KEY     - Stripe API key (sk_live_... or sk_test_...)
-#   STRIPE_WEBHOOK_SECRET - signing secret of the /license/webhook endpoint (whsec_...)
-#   LICENSE_SIGNING_KEY   - Ed25519 private key; generate with `node scripts/gen-license-key.mjs`
-# Optional: sell an existing recurring Stripe Price instead of the built-in
-# $1/month inline price by uncommenting:
-# [vars]
-# STRIPE_PRICE_ID = "price_..."
+# Licensing (Razorpay) — required for /license/*. Secrets, set with
+# `wrangler secret put <NAME>`:
+#   RAZORPAY_KEY_SECRET     - Razorpay API key secret (Dashboard → Account & Settings → API keys)
+#   RAZORPAY_WEBHOOK_SECRET - the secret you set on the /license/webhook webhook
+#   LICENSE_SIGNING_KEY     - Ed25519 private key; generate with `node scripts/gen-license-key.mjs`
+# and these vars (the key id is public — Checkout in the browser needs it):
+[vars]
+RAZORPAY_KEY_ID = "REPLACE_WITH_RAZORPAY_KEY_ID"     # rzp_live_... (rzp_test_... while testing)
+RAZORPAY_PLAN_ID = "REPLACE_WITH_RAZORPAY_PLAN_ID"   # the $1/month Plan: plan_...
+# TRIAL_DAYS = "7"                                   # free trial length (default 7)
 
 # Optional secrets (set with `wrangler secret put <NAME>`):
 #   STATS_TOKEN  - required to read GET /dl/stats?key=...

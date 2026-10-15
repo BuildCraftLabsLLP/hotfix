@@ -63,7 +63,7 @@ Settings are accessible from the tray icon → **Settings**.
 
 ### Linux notes
 
-**Hotfix for Linux is a $1/month subscription, per computer.** On first launch the tray shows **Subscribe ($1/month)…**, which opens a Stripe checkout page in your browser; the app unlocks by itself a few seconds after payment. The subscription is tied to that one machine (no license key to enter or share) — **Manage Subscription…** opens Stripe's billing portal to update your card or cancel. Until subscribed, monitoring is off. A subscribed machine keeps working offline for up to 72 hours between license checks.
+**Hotfix for Linux is free for 7 days, then a $1/month subscription, per computer.** The trial starts on first launch, needs no card, and the tray shows how many days are left. **Subscribe ($1/month)…** in the tray opens a Razorpay checkout page in your browser; the app unlocks by itself a few seconds after payment. Subscribing during the trial doesn't cut it short — the first payment is taken when the free week ends. The subscription is tied to that one machine (no license key to enter or share) — **Manage Subscription…** shows its status and lets you cancel. Once the trial is over, monitoring is off until you subscribe. A subscribed machine keeps working offline for up to 72 hours between license checks.
 
 The Linux app looks and works like the Windows one: the same tray menu, and **Settings…** opens the same settings popover — protection toggles, CPU threshold and kill-after sliders, exclusions, logs and About. It renders with **WebKitGTK 4.1**, which the `.deb`/`.rpm` install automatically; with the `.tar.gz`, install it yourself (`sudo apt install libwebkit2gtk-4.1-0`) — without it the tray still works and Settings opens `~/.config/hotfix/config.json` instead (changes there are picked up automatically when you save).
 
@@ -138,7 +138,7 @@ hotfix/
 │   └── *.go            # Go source files
 ├── icon/               # App icon assets
 ├── docs/               # Marketing website (GitHub Pages, hotfix.buildcraft.town)
-├── worker/             # Cloudflare Worker: /dl/* download counter + /license/* Linux licensing API (Stripe)
+├── worker/             # Cloudflare Worker: /dl/* download counter + /license/* Linux licensing API (Razorpay)
 ├── landing-page/       # Older marketing site
 └── .github/workflows/  # CI (macOS + Windows + Linux builds, site update)
 ```

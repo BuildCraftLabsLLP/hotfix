@@ -28,6 +28,12 @@ func signTestToken(t *testing.T, priv ed25519.PrivateKey, c licenseClaims) strin
 	return body + "." + base64.RawURLEncoding.EncodeToString(ed25519.Sign(priv, []byte(body)))
 }
 
+// cachedLicenseActive reports whether the cache holds a valid active token.
+func cachedLicenseActive(pub ed25519.PublicKey, fp string) bool {
+	_, ok := cachedLicense(pub, fp)
+	return ok
+}
+
 func testKeys(t *testing.T) (ed25519.PublicKey, ed25519.PrivateKey) {
 	t.Helper()
 	pub, priv, err := ed25519.GenerateKey(nil)
@@ -184,10 +190,12 @@ func TestLicensed_DevBuildIsNotEnforced(t *testing.T) {
 }
 
 // licenseServer fakes the licensing API. status is what /verify answers for
-// the requesting fingerprint; "down" makes it fail.
+// the requesting fingerprint; "down" makes it fail, "trial" answers a free
+// trial with trialLeft to go, "trial_expired" an ended one.
 type licenseServer struct {
-	status atomic.Value // string
-	hits   atomic.Int32
+	status    atomic.Value // string
+	trialLeft atomic.Int64 // seconds, for "trial"
+	hits      atomic.Int32
 }
 
 func startLicenseEnv(t *testing.T) (*licenseServer, string) {
@@ -198,6 +206,7 @@ func startLicenseEnv(t *testing.T) (*licenseServer, string) {
 
 	ls := &licenseServer{}
 	ls.status.Store("inactive")
+	ls.trialLeft.Store(3 * 86400)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ls.hits.Add(1)
 		status := ls.status.Load().(string)
@@ -214,6 +223,11 @@ func startLicenseEnv(t *testing.T) (*licenseServer, string) {
 		case "forged":
 			_, evil := testKeys(t)
 			token = signTestToken(t, evil, licenseClaims{Fingerprint: reqFP, Status: "active", IssuedAt: now, Expires: now + 3600})
+		case "trial":
+			end := now + ls.trialLeft.Load()
+			token = signTestToken(t, priv, licenseClaims{Fingerprint: reqFP, Status: "active", Plan: "trial", IssuedAt: now, Expires: min(now+3600, end), TrialEnd: end})
+		case "trial_expired":
+			token = signTestToken(t, priv, licenseClaims{Fingerprint: reqFP, Status: "inactive", Plan: "trial_expired", IssuedAt: now, Expires: now + 3600, TrialEnd: now - 60})
 		default:
 			token = signTestToken(t, priv, licenseClaims{Fingerprint: reqFP, Status: status, IssuedAt: now, Expires: now + 3600})
 		}
@@ -228,6 +242,8 @@ func startLicenseEnv(t *testing.T) (*licenseServer, string) {
 		srv.Close()
 		licenseAPIBase, licensePublicKey = origBase, origKey
 		licenseActive.Store(false)
+		licenseTrialEnd.Store(0)
+		licenseFastUntil.Store(0)
 		licenseMu.Lock()
 		licenseReason = ""
 		licenseMu.Unlock()
@@ -351,6 +367,145 @@ func TestCachedToken_NotTransferableToAnotherMachine(t *testing.T) {
 	}
 	if cachedLicenseActive(licensePubKey(), otherFP) {
 		t.Error("cached token must not validate for a different fingerprint")
+	}
+}
+
+func TestRefreshLicense_FreeTrialUnlocks(t *testing.T) {
+	ls, fp := startLicenseEnv(t)
+	ls.status.Store("trial")
+
+	refreshLicense()
+	if !licensed() {
+		t.Fatal("a machine on its free trial must be unlocked")
+	}
+	if subscribed() {
+		t.Error("the trial isn't a subscription (Subscribe stays in the menu)")
+	}
+	if got := trialStatusNote(); got != " · Free trial: 3 days left" {
+		t.Errorf("tray note: %q", got)
+	}
+	if got := baseStatus(Config{Enabled: true}); got != "Watching · Free trial: 3 days left" {
+		t.Errorf("tray status: %q", got)
+	}
+	if !cachedLicenseActive(licensePubKey(), fp) {
+		t.Error("the trial token should be cached like a subscription's")
+	}
+}
+
+func TestRefreshLicense_ExpiredTrialLocks(t *testing.T) {
+	ls, _ := startLicenseEnv(t)
+	ls.status.Store("trial")
+	refreshLicense()
+
+	ls.status.Store("trial_expired")
+	refreshLicense()
+	if licensed() {
+		t.Fatal("an ended trial must lock the app")
+	}
+	if got := licenseStatusLabel(); got != "Free trial ended" {
+		t.Errorf("status label: %q", got)
+	}
+	if licenseTrialEnd.Load() != 0 || trialStatusNote() != "" {
+		t.Error("no trial note once locked")
+	}
+	if loadCachedToken() != "" {
+		t.Error("the trial token must be dropped once the trial ends")
+	}
+}
+
+func TestRefreshLicense_SubscribingDuringTrial(t *testing.T) {
+	ls, _ := startLicenseEnv(t)
+	ls.status.Store("trial")
+	refreshLicense()
+
+	ls.status.Store("active")
+	refreshLicense()
+	if !subscribed() || licenseTrialEnd.Load() != 0 {
+		t.Error("after subscribing, the app is on the subscription, not the trial")
+	}
+	if got := baseStatus(Config{Enabled: true}); got != "Watching" {
+		t.Errorf("tray status: %q", got)
+	}
+}
+
+// Offline, a cached trial token keeps working — but only until the trial ends.
+func TestRefreshLicense_OfflineTrialEndsOnTime(t *testing.T) {
+	ls, fp := startLicenseEnv(t)
+	ls.trialLeft.Store(2)
+	ls.status.Store("trial")
+	refreshLicense()
+
+	ls.status.Store("down")
+	licenseActive.Store(false)
+	refreshLicense()
+	if !licensed() {
+		t.Fatal("the cached trial token works offline while the trial lasts")
+	}
+	c, _ := cachedLicense(licensePubKey(), fp)
+	if c.Expires > c.TrialEnd {
+		t.Errorf("a trial token must expire with the trial: %+v", c)
+	}
+
+	time.Sleep(2100 * time.Millisecond)
+	refreshLicense()
+	if licensed() {
+		t.Error("once the trial is over the cached token must not unlock the app")
+	}
+}
+
+func TestTrialDaysLeft(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	for _, tc := range []struct {
+		left int64
+		want int
+	}{
+		{7 * 86400, 7},
+		{6*86400 + 1, 7},
+		{6 * 86400, 6},
+		{3600, 1},
+		{1, 1},
+		{0, 1},
+	} {
+		if got := trialDaysLeft(now.Unix()+tc.left, now); got != tc.want {
+			t.Errorf("%ds left: got %d days, want %d", tc.left, got, tc.want)
+		}
+	}
+}
+
+func TestLicenseWait(t *testing.T) {
+	startLicenseEnv(t)
+	now := time.Unix(1_800_000_000, 0)
+
+	licenseActive.Store(true)
+	if got := licenseWait(true, now); got != licenseCheckInterval {
+		t.Errorf("subscribed: %v", got)
+	}
+
+	// On the trial, the next check lands when it ends…
+	licenseTrialEnd.Store(now.Unix() + 3600)
+	if got := licenseWait(true, now); got != time.Hour+time.Second {
+		t.Errorf("trial ending in an hour: %v", got)
+	}
+	// …but never in a tight loop if the clocks disagree.
+	licenseTrialEnd.Store(now.Unix() - 10)
+	if got := licenseWait(true, now); got != licenseFastInterval {
+		t.Errorf("trial just ended: %v", got)
+	}
+	// After Subscribe is clicked during the trial, poll fast until it lands.
+	licenseTrialEnd.Store(now.Unix() + 3*86400)
+	licenseFastUntil.Store(now.Add(time.Minute).UnixNano())
+	if got := licenseWait(true, now); got != licenseFastInterval {
+		t.Errorf("subscribing during the trial: %v", got)
+	}
+
+	if got := licenseWait(false, now); got != licenseErrorInterval {
+		t.Errorf("server unreachable: %v", got)
+	}
+	licenseActive.Store(false)
+	licenseTrialEnd.Store(0)
+	licenseFastUntil.Store(0)
+	if got := licenseWait(true, now); got != licenseRetryInterval {
+		t.Errorf("locked: %v", got)
 	}
 }
 

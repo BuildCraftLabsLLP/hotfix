@@ -31,7 +31,7 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
-    // Linux subscription licensing (Stripe + signed license tokens).
+    // Linux subscription licensing (Razorpay + signed license tokens).
     if (url.pathname === "/license" || url.pathname.startsWith("/license/")) {
       return handleLicense(request, env, url);
     }

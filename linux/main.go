@@ -115,7 +115,7 @@ func onReady() {
 	// Build menu (same items and order as the Windows tray).
 	mStatus = systray.AddMenuItem("Hotfix — Watching", "")
 	mStatus.Disable()
-	mSubscribe = systray.AddMenuItem("Subscribe ($1/month)…", "Unlock Hotfix on this computer")
+	mSubscribe = systray.AddMenuItem("Subscribe ($1/month)…", "Subscribe to Hotfix on this computer")
 	mRefresh = systray.AddMenuItem("Refresh License", "Check again for an active subscription")
 	mSubscribe.Hide()
 	mRefresh.Hide()
@@ -126,7 +126,7 @@ func onReady() {
 
 	mSettings := systray.AddMenuItem("Settings...", "Open Hotfix settings")
 	mUpdate := systray.AddMenuItem("Check for Updates", "Check GitHub for a newer release")
-	mManage = systray.AddMenuItem("Manage Subscription…", "Update payment details or cancel")
+	mManage = systray.AddMenuItem("Manage Subscription…", "See or cancel your subscription")
 	mManage.Hide()
 	systray.AddSeparator()
 	mQuit := systray.AddMenuItem("Quit", "Quit Hotfix")
@@ -273,9 +273,9 @@ func baseStatus(cfg Config) string {
 	case !licensed():
 		return licenseStatusLabel()
 	case cfg.Enabled:
-		return "Watching"
+		return "Watching" + trialStatusNote()
 	default:
-		return "Disabled"
+		return "Disabled" + trialStatusNote()
 	}
 }
 
@@ -288,12 +288,14 @@ func syncMenu() {
 	}
 	cfg := getConfig()
 
-	// Locked: offer Subscribe / Refresh and grey out monitoring. Subscribed (in
-	// a build that enforces licensing): offer Manage Subscription.
+	// Locked: offer Subscribe / Refresh and grey out monitoring. On the free
+	// trial: offer Subscribe. Subscribed (in a build that enforces licensing):
+	// offer Manage Subscription.
 	ok := licensed()
-	setVisible(mSubscribe, !ok)
+	trial := licenseTrialEnd.Load() != 0
+	setVisible(mSubscribe, !ok || trial)
 	setVisible(mRefresh, !ok)
-	setVisible(mManage, ok && licenseEnforced())
+	setVisible(mManage, ok && !trial && licenseEnforced())
 	if ok {
 		mToggle.Enable()
 	} else {
