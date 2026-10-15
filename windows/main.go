@@ -114,10 +114,6 @@ func onReady() {
 	// Begin silent background auto-updates (launch check + periodic poll).
 	startAutoUpdater()
 
-	// Scan the Start Menu in the background now, so the exclusions dropdown
-	// in Settings never waits on it (see cachedInstalledApps).
-	cachedInstalledApps()
-
 	// Event loop. A panic while handling a click is captured and reported
 	// rather than silently killing the tray (panics go to a discarded stderr
 	// under -H windowsgui). Each action is wrapped so one bad handler can't

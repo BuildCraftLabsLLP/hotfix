@@ -3,10 +3,10 @@ import AppKit
 
 class UpdateChecker {
     static let shared = UpdateChecker()
-    static let currentVersion = "1.0.13"
+    static let currentVersion = "1.0.12"
 
-    private let releasesURL = URL(string: "https://api.github.com/repos/BuildCraftLabsLLP/hotfix/releases/latest")!
-    private let releasesPageURL = URL(string: "https://github.com/BuildCraftLabsLLP/hotfix/releases/latest")!
+    private let releasesURL = URL(string: "https://api.github.com/repos/buildcraftlabs/hotfix/releases/latest")!
+    private let releasesPageURL = URL(string: "https://github.com/buildcraftlabs/hotfix/releases/latest")!
 
     private var updateTimer: Timer?
     private let autoCheckInterval: TimeInterval = 6 * 60 * 60  // 6 hours
