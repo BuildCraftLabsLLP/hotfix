@@ -5,9 +5,9 @@ name: Server
 
 on:
   push:
-    paths: ["server/**", ".github/workflows/server.yml"]
+    paths: ["server/**", "worker/src/server-api.js", "worker/test/server-api.test.mjs", "worker/migrations/**", ".github/workflows/server.yml"]
   pull_request:
-    paths: ["server/**", ".github/workflows/server.yml"]
+    paths: ["server/**", "worker/src/server-api.js", "worker/test/server-api.test.mjs", "worker/migrations/**", ".github/workflows/server.yml"]
   workflow_dispatch:
 
 permissions:
@@ -129,6 +129,16 @@ jobs:
 
           & $h uninstall; if ($LASTEXITCODE) { exit 1 }
           sc.exe query hotfixd; if ($LASTEXITCODE -eq 0) { throw "service still registered" }
+
+  # The licensing API (worker/src/server-api.js) against real SQLite (node:sqlite).
+  api:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node --test worker/test/server-api.test.mjs
 
   # Every release target builds (CGO-free cross-compiles from Linux).
   build:
