@@ -5,6 +5,13 @@
 // then 302s to the *latest* GitHub release asset (resolved live via the API,
 // so the site never needs per-release version bumps).
 //
+// GitHub rate-limits unauthenticated API calls per IP, and Cloudflare's IPs are
+// shared, so the API often refuses (set the GITHUB_TOKEN secret to get our own
+// limit). When it does, the latest tag is read from the github.com
+// /releases/latest redirect instead (not an API call) and the asset URL is
+// built from the release's file naming. If even that fails, the visitor goes
+// to the release page rather than getting an error.
+//
 // The app's silent auto-updater fetches browser_download_url directly and never
 // touches /dl, so these counters approximate INSTALLS, not updates. It's a
 // fuzzy proxy by design: it can't tell a brand-new user from an existing user
@@ -13,16 +20,37 @@
 
 const REPO = "BuildCraftLabsLLP/hotfix";
 const LATEST_API = `https://api.github.com/repos/${REPO}/releases/latest`;
+const LATEST_PAGE = `https://github.com/${REPO}/releases/latest`;
 const ASSET_TTL = 300; // seconds to cache the resolved asset URL
 
-// platform -> predicate over the release asset name
-const PICKERS = {
-  mac: (name) => name.endsWith(".dmg"),
-  win: (name) => name.startsWith("Hotfix-Setup-") && name.endsWith(".exe"),
-  linux: (name) => name.endsWith("-Linux-x86_64.deb"), // double-click installer (Ubuntu/Debian)
-  "linux-rpm": (name) => name.endsWith("-Linux-x86_64.rpm"), // Fedora/openSUSE
-  "linux-tar": (name) => name.endsWith("-Linux-x86_64.tar.gz"), // any distro, per-user install.sh
-  "linux-arm64": (name) => name.endsWith("-Linux-arm64.tar.gz"),
+// platform -> how to find its asset: `pick` matches a name in the API's asset
+// list; `name` builds the file name for a release tag (the CI naming, used when
+// the API can't be asked).
+const PLATFORMS = {
+  mac: {
+    pick: (n) => n.endsWith(".dmg"),
+    name: (tag) => `Hotfix-${tag}-macOS.dmg`,
+  },
+  win: {
+    pick: (n) => n.startsWith("Hotfix-Setup-") && n.endsWith(".exe"),
+    name: (tag) => `Hotfix-Setup-${tag}-Windows.exe`,
+  },
+  linux: { // double-click installer (Ubuntu/Debian)
+    pick: (n) => n.endsWith("-Linux-x86_64.deb"),
+    name: (tag) => `Hotfix-${tag}-Linux-x86_64.deb`,
+  },
+  "linux-rpm": { // Fedora/openSUSE
+    pick: (n) => n.endsWith("-Linux-x86_64.rpm"),
+    name: (tag) => `Hotfix-${tag}-Linux-x86_64.rpm`,
+  },
+  "linux-tar": { // any distro, per-user install.sh
+    pick: (n) => n.endsWith("-Linux-x86_64.tar.gz"),
+    name: (tag) => `Hotfix-${tag}-Linux-x86_64.tar.gz`,
+  },
+  "linux-arm64": {
+    pick: (n) => n.endsWith("-Linux-arm64.tar.gz"),
+    name: (tag) => `Hotfix-${tag}-Linux-arm64.tar.gz`,
+  },
 };
 
 export default {
@@ -33,11 +61,11 @@ export default {
 
     if (seg === "stats") return stats(request, env, url);
 
-    const pick = PICKERS[seg];
-    if (!pick) return new Response("Not found", { status: 404 });
+    const platform = PLATFORMS[seg];
+    if (!platform) return new Response("Not found", { status: 404 });
 
-    const target = await latestAsset(env, seg, pick);
-    if (!target) return new Response("No release asset found", { status: 502 });
+    // Last resort: the release page, where the file can be picked by hand.
+    const target = (await latestAsset(env, seg, platform)) || LATEST_PAGE;
 
     // Count asynchronously so the redirect is instant.
     ctx.waitUntil(bump(env, seg));
@@ -45,32 +73,57 @@ export default {
   },
 };
 
-// Resolve (and briefly cache) the latest release asset download URL.
-async function latestAsset(env, platform, pick) {
+// Resolve (and briefly cache) the latest release asset download URL, or null.
+async function latestAsset(env, key, platform) {
   const cache = caches.default;
-  const cacheKey = new Request(`https://dl-cache/${platform}`);
+  const cacheKey = new Request(`https://dl-cache/${key}`);
 
   const hit = await cache.match(cacheKey);
   if (hit) return (await hit.text()) || null;
 
+  const dlUrl = (await fromAPI(env, platform)) || (await fromLatestTag(platform));
+  if (dlUrl) {
+    await cache.put(
+      cacheKey,
+      new Response(dlUrl, { headers: { "Cache-Control": `max-age=${ASSET_TTL}` } }),
+    );
+  }
+  return dlUrl;
+}
+
+// The asset's URL from the releases API, or null (rate-limited, down, or no
+// matching asset).
+async function fromAPI(env, platform) {
   const headers = {
     "User-Agent": "hotfix-dl-worker",
     Accept: "application/vnd.github+json",
   };
   if (env.GITHUB_TOKEN) headers.Authorization = `Bearer ${env.GITHUB_TOKEN}`;
+  try {
+    const res = await fetch(LATEST_API, { headers });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const asset = (data.assets || []).find((a) => platform.pick(a.name));
+    return asset ? asset.browser_download_url : null;
+  } catch {
+    return null;
+  }
+}
 
-  const res = await fetch(LATEST_API, { headers });
-  if (!res.ok) return null;
-
-  const data = await res.json();
-  const asset = (data.assets || []).find((a) => pick(a.name));
-  const dlUrl = asset ? asset.browser_download_url : "";
-
-  await cache.put(
-    cacheKey,
-    new Response(dlUrl, { headers: { "Cache-Control": `max-age=${ASSET_TTL}` } }),
-  );
-  return dlUrl || null;
+// The asset's URL built from the latest tag, which github.com/…/releases/latest
+// names in its redirect (a web page, so not subject to the API rate limit).
+async function fromLatestTag(platform) {
+  try {
+    const res = await fetch(LATEST_PAGE, {
+      redirect: "manual",
+      headers: { "User-Agent": "hotfix-dl-worker" },
+    });
+    const m = (res.headers.get("Location") || "").match(/\/releases\/tag\/(v[0-9][\w.-]*)$/);
+    if (!m) return null;
+    return `https://github.com/${REPO}/releases/download/${m[1]}/${platform.name(m[1])}`;
+  } catch {
+    return null;
+  }
 }
 
 // Increment a lifetime counter plus a per-day bucket. KV is eventually
