@@ -27,8 +27,9 @@
 // server/license.go with the public key compiled into hotfixd.
 //
 // env: DB and KV (src/db.js), plus the environment variables
+//   SERVER_LICENSE_SIGNING_KEY,
 //   RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, RAZORPAY_WEBHOOK_SECRET,
-//   RAZORPAY_SERVER_PLAN_ID, SERVER_LICENSE_SIGNING_KEY,
+//   RAZORPAY_SERVER_PLAN_ID (all four, or none: billing off, see BILLING_ROUTES),
 //   optional TRIAL_DAYS (14), TRIAL_IP_DAILY (25), GITHUB_TOKEN (latest-version lookup).
 
 const PRODUCT = "server";
@@ -48,12 +49,22 @@ const PAY_RE = /^pay_[A-Za-z0-9]+$/;
 const RAZORPAY_API = "https://api.razorpay.com/v1";
 const REPO = "BuildCraftLabsLLP/hotfix";
 
+// Razorpay is configured all or nothing (src/server.js refuses a partial
+// setup). Without it billing is off: trials and the machine API work as usual,
+// the buy page says purchases open soon, and these routes answer 503.
+export const RAZORPAY_VARS = ["RAZORPAY_KEY_ID", "RAZORPAY_KEY_SECRET", "RAZORPAY_WEBHOOK_SECRET", "RAZORPAY_SERVER_PLAN_ID"];
+const billingEnabled = (env) => RAZORPAY_VARS.every((k) => env[k]);
+const BILLING_ROUTES = new Set(["checkout", "success", "manage", "recover", "webhook"]);
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const seg = url.pathname.replace(/^\/api\/server\/?/, "").replace(/\/$/, "");
     const route = `${request.method} ${seg}`;
     try {
+      if (BILLING_ROUTES.has(seg) && !billingEnabled(env)) {
+        return seg === "webhook" ? text("Billing is not enabled", 503) : billingOffPage();
+      }
       switch (route) {
         case "POST trial":
           return await trial(request, env);
@@ -64,7 +75,7 @@ export default {
         case "POST deactivate":
           return await deactivate(request, env);
         case "GET buy":
-          return buyPage(url);
+          return billingEnabled(env) ? buyPage(url) : billingOffPage(200);
         case "POST checkout":
           return await checkout(request, env, url);
         case "POST success":
@@ -593,6 +604,16 @@ function page(title, inner) {
 <body><main>${inner.startsWith("<h1") ? "" : `<h1>${esc(title)}</h1>`}${inner}</main></body></html>`,
     { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "X-Frame-Options": "DENY" } },
   );
+}
+
+function billingOffPage(status = 503) {
+  const res = page(
+    "Buy Hotfix Server",
+    `<h1>Hotfix Server</h1>
+<p><strong>$1 per server per month.</strong> Purchases open soon.</p>
+<p>Until then every server gets a 14-day free trial when you install it, no card needed.</p>`,
+  );
+  return new Response(res.body, { status, headers: res.headers });
 }
 
 function buyPage(url) {

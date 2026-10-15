@@ -180,6 +180,17 @@ jobs:
             kill $PID; wait $PID || true
           done
           cat /tmp/srv.log
+          # Billing off (no Razorpay variables): starts, trials work, buying says "soon".
+          unset RAZORPAY_KEY_ID RAZORPAY_KEY_SECRET RAZORPAY_WEBHOOK_SECRET RAZORPAY_SERVER_PLAN_ID
+          node src/server.js > /tmp/srv.log 2>&1 &
+          PID=$!
+          for i in $(seq 1 30); do curl -fs localhost:8080/healthz && break; sleep 1; done
+          curl -fs -X POST localhost:8080/api/server/trial -H 'Content-Type: application/json' \
+            -d "{\"fingerprint\":\"$(printf 'b%.0s' $(seq 64))\"}" | grep -q token
+          curl -fs localhost:8080/api/server/buy | grep -q 'Purchases open soon'
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST localhost:8080/api/server/checkout)" = 503
+          kill $PID; wait $PID || true
+          grep -q 'billing off' /tmp/srv.log
       - name: Docker image builds
         run: docker build -t hotfix-license-api .
 

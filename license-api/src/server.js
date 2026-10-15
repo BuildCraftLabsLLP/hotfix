@@ -4,15 +4,17 @@
 // variables listed in app.js. Migrations run at startup. GET /healthz checks
 // the database (Railway's healthcheck).
 import http from "node:http";
-import app from "./app.js";
+import app, { RAZORPAY_VARS } from "./app.js";
 import { postgres } from "./db.js";
 
-const REQUIRED = ["DATABASE_URL", "SERVER_LICENSE_SIGNING_KEY", "RAZORPAY_KEY_ID", "RAZORPAY_KEY_SECRET", "RAZORPAY_WEBHOOK_SECRET", "RAZORPAY_SERVER_PLAN_ID"];
-const missing = REQUIRED.filter((k) => !process.env[k]);
+// The Razorpay variables are all or nothing: none = billing off (trials only).
+const rzpSet = RAZORPAY_VARS.filter((k) => process.env[k]);
+const missing = ["DATABASE_URL", "SERVER_LICENSE_SIGNING_KEY", ...(rzpSet.length ? RAZORPAY_VARS : [])].filter((k) => !process.env[k]);
 if (missing.length) {
   console.error(`license-api: missing environment variables: ${missing.join(", ")}`);
   process.exit(1);
 }
+if (!rzpSet.length) console.log("license-api: Razorpay not configured: billing off (trials and the machine API only)");
 
 const store = await postgres(process.env.DATABASE_URL);
 const env = { ...process.env, DB: store.db, KV: store.kv };

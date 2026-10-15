@@ -53,7 +53,10 @@ railway up --service license-api    # build the Dockerfile and deploy this folde
    | `TRIAL_DAYS`, `TRIAL_IP_DAILY` | optional: 14 and 25 by default |
 
    The service refuses to start if a required variable is missing (see the deploy
-   logs); setting variables in the dashboard redeploys it.
+   logs); setting variables in the dashboard redeploys it. The four `RAZORPAY_*`
+   variables are all or nothing: with **none** set, billing is off. Trials and
+   `hotfixd` license calls work, the buy page says "Purchases open soon", and
+   checkout/manage/recover/webhook answer 503. Setting all four turns it on.
 2. Enable backups on the Postgres database (dashboard → Postgres → Backups).
 3. `railway domain status <id>` (or the service's **Networking** tab) shows the
    DNS records for `license.buildcraft.town`.

@@ -360,6 +360,25 @@ test("webhook: signature checked; state re-fetched from Razorpay", async () => {
   assert.equal((await call("webhook", signed(other))).status, 200);
 });
 
+test("billing off: no Razorpay variables -> trials and activation work, purchases don't", async () => {
+  for (const k of ["RAZORPAY_KEY_ID", "RAZORPAY_KEY_SECRET", "RAZORPAY_WEBHOOK_SECRET", "RAZORPAY_SERVER_PLAN_ID"]) delete env[k];
+  const buyRes = await call("buy");
+  assert.equal(buyRes.status, 200);
+  const html = await buyRes.text();
+  assert.match(html, /\$1 per server per month/);
+  assert.match(html, /Purchases open soon/);
+  assert.doesNotMatch(html, /checkout/);
+  for (const [path, init] of [["checkout", { method: "POST" }], ["success?sub=sub_1", { method: "POST" }], ["manage", {}], ["manage", { method: "POST" }], ["recover", {}], ["webhook", { method: "POST" }]]) {
+    assert.equal((await call(path, init)).status, 503, path);
+  }
+  assert.equal(rzpCalls.length, 0);
+  const t = await postJSON("trial", { fingerprint: fp("a") });
+  assert.equal(t.status, 200);
+  assert.equal(claims((await t.json()).token).plan, "trial");
+  const a = await postJSON("activate", { key: "HFXS-AAAAA-AAAAA-AAAAA-AAAAA", ...machine("b") });
+  assert.notEqual(a.status, 500);
+});
+
 test("routing", async () => {
   assert.equal((await call("nope")).status, 404);
   assert.equal((await call("activate")).status, 405);
