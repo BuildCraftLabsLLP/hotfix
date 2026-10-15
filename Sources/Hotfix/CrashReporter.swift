@@ -12,7 +12,7 @@ import Darwin
 // keeps reporting tokenless and lets the user review before sending.
 
 enum CrashReporter {
-    static let issueBaseURL = "https://github.com/buildcraftlabs/hotfix/issues/new"
+    static let issueBaseURL = "https://github.com/BuildCraftLabsLLP/hotfix/issues/new"
 
     /// Marker file, kept beside the log (~/Library/Logs/Hotfix/lastcrash.txt).
     static var crashFileURL: URL? {

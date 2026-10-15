@@ -24,7 +24,7 @@
 
 #define MyAppName "Hotfix"
 #define MyAppPublisher "BuildCraft Labs"
-#define MyAppURL "https://github.com/buildcraftlabs/hotfix"
+#define MyAppURL "https://github.com/BuildCraftLabsLLP/hotfix"
 #define MyAppExeName "Hotfix.exe"
 
 [Setup]

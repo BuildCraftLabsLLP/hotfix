@@ -43,7 +43,7 @@ func TestBuildIssueURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildIssueURL produced an unparseable URL: %v", err)
 	}
-	if parsed.Host != "github.com" || parsed.Path != "/buildcraftlabs/hotfix/issues/new" {
+	if parsed.Host != "github.com" || parsed.Path != "/BuildCraftLabsLLP/hotfix/issues/new" {
 		t.Errorf("unexpected target: %s%s", parsed.Host, parsed.Path)
 	}
 
