@@ -10,6 +10,8 @@ permissions:
 
 jobs:
   build-windows:
+    # Hotfix Server ships on its own server-v* releases (see server.yml).
+    if: ${{ !startsWith(github.event.release.tag_name || '', 'server-v') }}
     runs-on: windows-2025
     defaults:
       run:
@@ -101,6 +103,8 @@ jobs:
             dist/Hotfix-Setup-${{ github.event.release.tag_name }}-Windows.exe
 
   build-macos:
+    # Hotfix Server ships on its own server-v* releases (see server.yml).
+    if: ${{ !startsWith(github.event.release.tag_name || '', 'server-v') }}
     runs-on: macos-latest
 
     steps:
@@ -136,6 +140,8 @@ jobs:
   # One job per CPU, each on a native runner. Ubuntu 22.04 (glibc 2.35) so the
   # app runs on 22.04 and newer, Debian 12, Fedora, etc.
   build-linux:
+    # Hotfix Server ships on its own server-v* releases (see server.yml).
+    if: ${{ !startsWith(github.event.release.tag_name || '', 'server-v') }}
     strategy:
       fail-fast: false
       matrix:
@@ -319,7 +325,7 @@ jobs:
   # serves docs/ from main). Keeps docs/index.html links from going stale.
   update-site:
     needs: [build-windows, build-macos]
-    if: github.event_name == 'release'
+    if: github.event_name == 'release' && !startsWith(github.event.release.tag_name, 'server-v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
