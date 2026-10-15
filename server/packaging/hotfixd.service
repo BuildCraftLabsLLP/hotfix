@@ -1,0 +1,46 @@
+[Unit]
+Description=Hotfix Server (kills runaway processes)
+Documentation=https://hotfix.buildcraft.town/server.html
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/hotfixd run
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+# Stay alive (and responsive) when the machine is under pressure.
+OOMScoreAdjust=-900
+Nice=-5
+EnvironmentFile=-/etc/default/hotfixd
+
+# Hardening. hotfixd must still see and signal every user's processes:
+# CAP_KILL to signal them, CAP_SYS_PTRACE + CAP_DAC_READ_SEARCH to read their
+# /proc entries (e.g. /proc/<pid>/exe). No ProtectProc/ProcSubset/PrivatePIDs,
+# which would hide the processes it watches.
+CapabilityBoundingSet=CAP_KILL CAP_SYS_PTRACE CAP_DAC_READ_SEARCH
+AmbientCapabilities=
+NoNewPrivileges=yes
+ProtectSystem=strict
+StateDirectory=hotfix-server
+LogsDirectory=hotfix-server
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
