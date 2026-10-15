@@ -204,11 +204,11 @@
 
     /* ── Stats ── */
     .stats-section { text-align: center; }
-    .stats-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 16px; max-width: 720px; margin: 48px auto 0; }
+    .stats-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 16px; max-width: 900px; margin: 48px auto 0; }
     .stat-card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 34px 20px; }
     .stat-num { font-family: 'Fraunces', Georgia, serif; font-weight: 400; font-size: clamp(38px, 5vw, 54px); line-height: 1; color: var(--accent); }
     .stat-label { font-size: 12px; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase; color: var(--muted); margin-top: 12px; }
-    @media(max-width:560px){ .stats-grid { grid-template-columns: 1fr; } }
+    @media(max-width:760px){ .stats-grid { grid-template-columns: repeat(2,1fr); max-width: 480px; } }
 
     /* ── Footer ── */
     footer {
@@ -446,15 +446,19 @@
     <p class="section-sub" style="margin:0 auto;">Live counts, straight from GitHub Releases.</p>
     <div class="stats-grid">
       <div class="stat-card">
-        <div class="stat-num" id="stat-mac">50</div>
+        <div class="stat-num" id="stat-mac">152</div>
         <div class="stat-label">🍎 macOS</div>
       </div>
       <div class="stat-card">
-        <div class="stat-num" id="stat-win">47</div>
+        <div class="stat-num" id="stat-win">152</div>
         <div class="stat-label">🪟 Windows</div>
       </div>
       <div class="stat-card">
-        <div class="stat-num" id="stat-total">97</div>
+        <div class="stat-num" id="stat-linux">13</div>
+        <div class="stat-label">🐧 Linux</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-num" id="stat-total">317</div>
         <div class="stat-label">Total Downloads</div>
       </div>
     </div>
@@ -634,16 +638,18 @@
       });
       if (!res.ok) return;
       const releases = await res.json();
-      let mac = 0, win = 0;
+      let mac = 0, win = 0, linux = 0;
       releases.forEach(r => (r.assets || []).forEach(a => {
         const n = a.name, c = a.download_count || 0;
         if (/macOS\.dmg$/.test(n) || n === 'Hotfix.dmg') mac += c;            // macOS installers
         else if (/Setup/.test(n) || n === 'Hotfix.exe') win += c;            // Windows installers (excludes auto-updater raw exe)
+        else if (/-Linux-\w+\.(deb|rpm|tar\.gz)$/.test(n)) linux += c;     // Linux packages (excludes auto-updater raw binary)
       }));
       const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v.toLocaleString(); };
       set('stat-mac', mac);
       set('stat-win', win);
-      set('stat-total', mac + win);
+      set('stat-linux', linux);
+      set('stat-total', mac + win + linux);
     } catch (e) { /* keep baked-in fallbacks */ }
   })();
 </script>
