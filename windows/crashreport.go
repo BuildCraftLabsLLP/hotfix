@@ -24,7 +24,7 @@ import (
 	"time"
 )
 
-const issueBaseURL = "https://github.com/buildcraftlabs/hotfix/issues/new"
+const issueBaseURL = "https://github.com/BuildCraftLabsLLP/hotfix/issues/new"
 
 // reportOnce ensures we open at most one browser tab per process run, so a
 // tight panic loop can't spawn dozens of GitHub tabs.
