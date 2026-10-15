@@ -27,16 +27,10 @@ const defaultTooltip = "Hotfix — by BuildCraft Labs"
 //
 // The menu mirrors the Windows app: a status line, Enable Monitoring,
 // Settings… (the same settings popover as Windows — see settings_window.go),
-// Check for Updates and Quit. Linux adds the subscription items (license.go).
+// Check for Updates and Quit.
 var (
 	mStatus *systray.MenuItem
 	mToggle *systray.MenuItem
-
-	// Subscription items: Subscribe/Refresh show while the app is locked,
-	// Manage while it is subscribed.
-	mSubscribe *systray.MenuItem
-	mRefresh   *systray.MenuItem
-	mManage    *systray.MenuItem
 
 	trayMu        sync.Mutex
 	statusTimeout *time.Timer
@@ -46,11 +40,7 @@ func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "--version", "-v":
-			if licenseEnforced() {
-				fmt.Println("Hotfix", currentVersion)
-			} else {
-				fmt.Println("Hotfix", currentVersion, "(dev build: licensing not enforced)")
-			}
+			fmt.Println("Hotfix", currentVersion)
 			return
 		case settingsFlag:
 			// The settings window runs in its own process (see settings_window.go).
@@ -115,10 +105,6 @@ func onReady() {
 	// Build menu (same items and order as the Windows tray).
 	mStatus = systray.AddMenuItem("Hotfix — Watching", "")
 	mStatus.Disable()
-	mSubscribe = systray.AddMenuItem("Subscribe ($1/month)…", "Subscribe to Hotfix on this computer")
-	mRefresh = systray.AddMenuItem("Refresh License", "Check again for an active subscription")
-	mSubscribe.Hide()
-	mRefresh.Hide()
 	systray.AddSeparator()
 
 	mToggle = systray.AddMenuItemCheckbox("Enable Monitoring", "", false)
@@ -126,17 +112,10 @@ func onReady() {
 
 	mSettings := systray.AddMenuItem("Settings...", "Open Hotfix settings")
 	mUpdate := systray.AddMenuItem("Check for Updates", "Check GitHub for a newer release")
-	mManage = systray.AddMenuItem("Manage Subscription…", "See or cancel your subscription")
-	mManage.Hide()
 	systray.AddSeparator()
 	mQuit := systray.AddMenuItem("Quit", "Quit Hotfix")
 
-	// Verify the subscription (a cached license unlocks immediately; the
-	// server check continues in the background and locks/unlocks as it lands).
-	startLicenseWatcher()
-
-	// Apply the loaded config: starts the monitor if licensed and enabled, and
-	// syncs the menu.
+	// Apply the loaded config: starts the monitor if enabled, and syncs the menu.
 	applyRuntime(getConfig())
 
 	// Watch for system suspend (KillOnSleep support).
@@ -156,9 +135,6 @@ func onReady() {
 	onClick(mToggle, "toggle", func() { updateConfig(func(c *Config) { c.Enabled = !c.Enabled }) })
 	onClick(mSettings, "settings", openSettings)
 	onClick(mUpdate, "update", func() { safeGo("update", func() { checkForUpdates(false) }) })
-	onClick(mSubscribe, "subscribe", openSubscribePage)
-	onClick(mRefresh, "refresh-license", recheckLicenseNow)
-	onClick(mManage, "manage-subscription", openManagePage)
 	onClick(mQuit, "quit", systray.Quit)
 }
 
@@ -255,10 +231,9 @@ func persistConfig(cfg Config) (Config, error) {
 }
 
 // applyRuntime starts/stops the monitor to match cfg.Enabled and refreshes the
-// tray. Without an active subscription the monitor never runs, whatever the
-// config says. Both monitor calls are idempotent.
+// tray. Both monitor calls are idempotent.
 func applyRuntime(cfg Config) {
-	if licensed() && cfg.Enabled {
+	if cfg.Enabled {
 		startMonitor()
 	} else {
 		stopMonitor()
@@ -269,17 +244,13 @@ func applyRuntime(cfg Config) {
 
 // baseStatus is the resting tray status label for cfg.
 func baseStatus(cfg Config) string {
-	switch {
-	case !licensed():
-		return licenseStatusLabel()
-	case cfg.Enabled:
-		return "Watching" + trialStatusNote()
-	default:
-		return "Disabled" + trialStatusNote()
+	if cfg.Enabled {
+		return "Watching"
 	}
+	return "Disabled"
 }
 
-// syncMenu updates the menu to reflect the config and subscription state.
+// syncMenu updates the menu to reflect the config.
 // nil-guarded so it is safe to call before the tray menu is built (e.g. from
 // tests) without panicking.
 func syncMenu() {
@@ -287,32 +258,10 @@ func syncMenu() {
 		return
 	}
 	cfg := getConfig()
-
-	// Locked: offer Subscribe / Refresh and grey out monitoring. On the free
-	// trial: offer Subscribe. Subscribed (in a build that enforces licensing):
-	// offer Manage Subscription.
-	ok := licensed()
-	trial := licenseTrialEnd.Load() != 0
-	setVisible(mSubscribe, !ok || trial)
-	setVisible(mRefresh, !ok)
-	setVisible(mManage, ok && !trial && licenseEnforced())
-	if ok {
-		mToggle.Enable()
-	} else {
-		mToggle.Disable()
-	}
 	if cfg.Enabled {
 		mToggle.Check()
 	} else {
 		mToggle.Uncheck()
-	}
-}
-
-func setVisible(item *systray.MenuItem, on bool) {
-	if on {
-		item.Show()
-	} else {
-		item.Hide()
 	}
 }
 

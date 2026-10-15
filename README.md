@@ -63,8 +63,6 @@ Settings are accessible from the tray icon → **Settings**.
 
 ### Linux notes
 
-**Hotfix for Linux is free for 7 days, then a $1/month subscription, per computer.** The trial starts on first launch, needs no card, and the tray shows how many days are left. **Subscribe ($1/month)…** in the tray opens a Razorpay checkout page in your browser; the app unlocks by itself a few seconds after payment. Subscribing during the trial doesn't cut it short — the first payment is taken when the free week ends. The subscription is tied to that one machine (no license key to enter or share) — **Manage Subscription…** shows its status and lets you cancel. Once the trial is over, monitoring is off until you subscribe. A subscribed machine keeps working offline for up to 72 hours between license checks.
-
 The Linux app looks and works like the Windows one: the same tray menu, and **Settings…** opens the same settings popover — protection toggles, CPU threshold and kill-after sliders, exclusions, logs and About. It renders with **WebKitGTK 4.1**, which the `.deb`/`.rpm` install automatically; with the `.tar.gz`, install it yourself (`sudo apt install libwebkit2gtk-4.1-0`) — without it the tray still works and Settings opens `~/.config/hotfix/config.json` instead (changes there are picked up automatically when you save).
 
 - **CPU % is per core**, as in `top`: a process using two full cores reads 200%.
@@ -110,8 +108,6 @@ go test ./...
 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o ../dist/hotfix .
 ```
 
-A plain local build like this does not enforce the subscription. Release builds do: CI stamps the license public key in with `-X main.licensePublicKey=…` (see [`worker/README.md`](worker/README.md#licensing-linux-subscription)).
-
 ## Releasing a New Version
 
 Releasing is fully automated. All binaries are built and attached by CI on every new release.
@@ -138,7 +134,7 @@ hotfix/
 │   └── *.go            # Go source files
 ├── icon/               # App icon assets
 ├── docs/               # Marketing website (GitHub Pages, hotfix.buildcraft.town)
-├── worker/             # Cloudflare Worker: /dl/* download counter + /license/* Linux licensing API (Razorpay)
+├── worker/             # Cloudflare Worker: /dl/* download counter
 ├── landing-page/       # Older marketing site
 └── .github/workflows/  # CI (macOS + Windows + Linux builds, site update)
 ```

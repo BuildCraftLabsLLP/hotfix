@@ -194,39 +194,17 @@ jobs:
           go vet ./...
           go test ./...
 
-      # The licensing backend (worker/src/license.js) the Linux app talks to.
-      - name: Test licensing API
-        if: matrix.arch == 'x86_64'
-        run: node --test worker/test/license.test.mjs
-
       # CGO_ENABLED=0: no C toolchain in the Go build; purego dynamically links
       # only the system C library and loads WebKitGTK when the window opens.
-      #
-      # The subscription check is compiled in by stamping the license public key
-      # (repo variable LICENSE_PUBLIC_KEY — see worker/README.md) into the
-      # binary. A release must never ship without it — that would be a build
-      # that doesn't enforce licensing — so the job fails instead.
       - name: Build
         env:
           CGO_ENABLED: 0
-          LICENSE_PUBLIC_KEY: ${{ vars.LICENSE_PUBLIC_KEY }}
-          EVENT_NAME: ${{ github.event_name }}
         run: |
-          if [ -z "$LICENSE_PUBLIC_KEY" ] && [ "$EVENT_NAME" = "release" ]; then
-            echo "::error::Repo variable LICENSE_PUBLIC_KEY is not set; refusing to release a Linux build without license enforcement."
-            exit 1
-          fi
           mkdir -p "dist/linux-${{ matrix.arch }}"
           cd linux
-          GOARCH="${{ matrix.goarch }}" go build -trimpath \
-            -ldflags "-s -w -X main.licensePublicKey=${LICENSE_PUBLIC_KEY}" \
+          GOARCH="${{ matrix.goarch }}" go build -trimpath -ldflags "-s -w" \
             -o "../dist/linux-${{ matrix.arch }}/hotfix" .
-          version="$(../dist/linux-${{ matrix.arch }}/hotfix --version)"
-          echo "$version"
-          if [ -n "$LICENSE_PUBLIC_KEY" ] && echo "$version" | grep -q "dev build"; then
-            echo "::error::License public key was not compiled into the binary."
-            exit 1
-          fi
+          ../dist/linux-${{ matrix.arch }}/hotfix --version
 
       # Opens the real settings window under a virtual display, drives the page
       # through its bindings (load, save, a rejected save, log), and checks
