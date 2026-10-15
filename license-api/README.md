@@ -94,6 +94,6 @@ node test/harness.mjs 8787 /tmp/lic                   # serve the API locally wi
 ```
 
 CI (`.github/workflows/server.yml`, job `api`) also starts the real
-`src/server.js` against PostgreSQL 16 twice (the second start proves migrations
+`src/server.js` against PostgreSQL 18 (as on Railway) twice (the second start proves migrations
 are idempotent) and builds the Docker image; job `license-e2e` runs an
 installed hotfixd against this API.
