@@ -422,153 +422,6 @@
       transform: scale(0.97);
     }
 
-    /* ── Running-apps dropdown (Exclusions) ── */
-    #exclusions-card {
-      overflow: visible; /* let the dropdown hang below the card */
-    }
-
-    .wl-combo {
-      position: relative;
-      flex: 1;
-      display: flex;
-    }
-
-    .wl-combo .wl-input {
-      padding-right: 40px;
-    }
-
-    .wl-toggle {
-      position: absolute;
-      top: 3px;
-      right: 3px;
-      width: 30px;
-      height: 30px;
-      border: none;
-      border-radius: 6px;
-      background: none;
-      color: var(--muted);
-      font-size: 0.7rem;
-      cursor: pointer;
-      transition: background var(--transition), color var(--transition), transform var(--transition);
-    }
-
-    .wl-toggle:hover {
-      background: var(--surface);
-      color: var(--text);
-    }
-
-    .wl-combo.open .wl-toggle {
-      color: var(--accent);
-      transform: rotate(180deg);
-    }
-
-    .wl-menu {
-      position: absolute;
-      top: calc(100% + 6px);
-      left: 0;
-      right: 0;
-      z-index: 30;
-      max-height: 260px;
-      overflow-y: auto;
-      padding: 4px;
-      background: #fff;
-      border: 1px solid var(--border);
-      border-radius: var(--radius-sm);
-      box-shadow: 0 8px 24px rgba(20,20,22,0.12);
-      scroll-margin-bottom: 84px; /* keep it clear of the fixed save bar */
-    }
-
-    .wl-menu[hidden] {
-      display: none;
-    }
-
-    .wl-menu-head {
-      padding: 6px 10px 4px;
-      font-size: 0.68rem;
-      font-weight: 700;
-      letter-spacing: 0.05em;
-      text-transform: uppercase;
-      color: var(--muted);
-    }
-
-    .wl-option {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      width: 100%;
-      padding: 7px 10px;
-      border: none;
-      border-radius: 6px;
-      background: none;
-      font-family: 'Courier New', Courier, monospace;
-      font-size: 0.82rem;
-      font-weight: 600;
-      color: var(--text);
-      text-align: left;
-      cursor: pointer;
-    }
-
-    .wl-option:hover,
-    .wl-option.active {
-      background: var(--surface);
-    }
-
-    .wl-option-name {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .wl-option-text {
-      display: flex;
-      align-items: baseline;
-      gap: 8px;
-      min-width: 0;
-    }
-
-    .wl-option-label {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      font-family: 'Manrope', sans-serif;
-      font-weight: 600;
-    }
-
-    .wl-option-exe {
-      flex-shrink: 0;
-      font-size: 0.74rem;
-      color: var(--muted);
-    }
-
-    .wl-option-meta {
-      flex-shrink: 0;
-      font-family: 'Manrope', sans-serif;
-      font-size: 0.72rem;
-      font-weight: 600;
-      color: var(--muted);
-    }
-
-    .wl-option.hot .wl-option-meta {
-      color: var(--accent);
-    }
-
-    .wl-option.added {
-      cursor: default;
-      opacity: 0.5;
-    }
-
-    .wl-option.added:hover {
-      background: none;
-    }
-
-    .wl-menu-note {
-      padding: 10px;
-      font-size: 0.78rem;
-      font-style: italic;
-      color: var(--muted);
-    }
-
     /* ── About section ── */
     .about-body {
       padding: 16px 20px;
@@ -849,15 +702,8 @@
         <!-- populated by JS -->
       </div>
       <div class="wl-add-row">
-        <div class="wl-combo" id="wl-combo">
-          <input type="text" class="wl-input" id="wl-input"
-            placeholder="Type a name or pick an app" maxlength="100"
-            autocomplete="off" spellcheck="false" role="combobox"
-            aria-autocomplete="list" aria-expanded="false" aria-controls="wl-menu" />
-          <button class="wl-toggle" id="wl-toggle" type="button" tabindex="-1"
-            aria-label="Show apps">▼</button>
-          <div class="wl-menu" id="wl-menu" role="listbox" hidden></div>
-        </div>
+        <input type="text" class="wl-input" id="wl-input"
+          placeholder="e.g. ffmpeg or steam" maxlength="100" />
         <button class="btn-add" id="wl-add-btn">Add</button>
       </div>
     </div>
@@ -893,7 +739,7 @@
     <div class="about-body">
       <div class="about-item">
         <span class="about-item-label">Version</span>
-        <span class="about-item-value">1.0.13</span>
+        <span class="about-item-value">1.0.12</span>
       </div>
       <div class="about-item">
         <span class="about-item-label">Platform</span>
@@ -1033,212 +879,22 @@
   }
 
   // ── Add whitelist entry ──
-  function addWhitelistName(raw) {
-    const name = raw.trim().replace(/\.exe$/i, '');
-    if (!name) return false;
+  function addWhitelistEntry() {
+    const name = $wlInput.value.trim().replace(/\.exe$/i, '');
+    if (!name) return;
     if (config.whitelist.includes(name)) {
       setStatus('Already in the list.', false);
-      return false;
+      return;
     }
     config.whitelist = [...config.whitelist, name];
     renderWhitelist(config.whitelist);
+    $wlInput.value = '';
     setStatus('');
-    return true;
-  }
-
-  function addWhitelistEntry() {
-    if (addWhitelistName($wlInput.value)) $wlInput.value = '';
-    closeAppMenu();
   }
 
   $wlAddBtn.addEventListener('click', addWhitelistEntry);
-
-  // ── Apps dropdown ──
-  // Lists the apps running right now (busiest first, with CPU use) and the
-  // other apps installed on the system, from hotfixListApps (provided by the
-  // Go host), so an exclusion can be picked instead of typed. Typing in the
-  // box filters both lists, by app name or process name.
-  const $wlCombo  = document.getElementById('wl-combo');
-  const $wlToggle = document.getElementById('wl-toggle');
-  const $wlMenu   = document.getElementById('wl-menu');
-  let knownApps    = null;  // [{name, label, cpu, running}] from the host; null until loaded
-  let appsLoadedAt = 0;
-  let appsLoading  = false;
-  let appsError    = '';
-  let menuOptions  = [];    // pickable names in display order (null = already excluded)
-  let activeOption = -1;
-
-  async function loadApps() {
-    if (appsLoading || (knownApps && Date.now() - appsLoadedAt < 5000)) return;
-    if (typeof hotfixListApps !== 'function') {
-      appsError = 'App list unavailable — type a name instead.';
-      renderAppMenu();
-      return;
-    }
-    appsLoading = true;
-    renderAppMenu();
-    try {
-      knownApps = (await hotfixListApps()) || [];
-      appsLoadedAt = Date.now();
-      appsError = '';
-    } catch (err) {
-      appsError = 'Could not list apps: ' + (err && err.message ? err.message : err);
-    } finally {
-      appsLoading = false;
-      renderAppMenu();
-    }
-  }
-
-  function isMenuOpen() { return !$wlMenu.hidden; }
-
-  function openAppMenu() {
-    if (isMenuOpen()) return;
-    $wlMenu.hidden = false;
-    $wlCombo.classList.add('open');
-    $wlInput.setAttribute('aria-expanded', 'true');
-    activeOption = -1;
-    renderAppMenu();
-    loadApps();
-  }
-
-  function closeAppMenu() {
-    if (!isMenuOpen()) return;
-    $wlMenu.hidden = true;
-    $wlCombo.classList.remove('open');
-    $wlInput.setAttribute('aria-expanded', 'false');
-    activeOption = -1;
-  }
-
-  function menuNote(text) {
-    const note = document.createElement('div');
-    note.className = 'wl-menu-note';
-    note.textContent = text;
-    $wlMenu.appendChild(note);
-  }
-
-  function renderAppMenu() {
-    if (!isMenuOpen()) return;
-    renderMenuContent();
-    // The box sits low on the page: scroll so the whole list shows above the
-    // save bar (a no-op when it already does).
-    $wlMenu.scrollIntoView({ block: 'nearest' });
-  }
-
-  function renderMenuContent() {
-    $wlMenu.innerHTML = '';
-    menuOptions = [];
-
-    if (appsError) return menuNote(appsError);
-    if (!knownApps) return menuNote('Loading apps…');
-
-    const typed = $wlInput.value.trim();
-    const filter = typed.toLowerCase().replace(/\.exe$/, '');
-    const matches = (a) => !filter ||
-      a.name.toLowerCase().includes(filter) || (a.label || '').toLowerCase().includes(filter);
-    const running = knownApps.filter((a) => a.running && matches(a));
-    const installed = knownApps.filter((a) => !a.running && matches(a));
-    if (running.length === 0 && installed.length === 0) {
-      return menuNote(filter
-        ? 'No app matches — press Enter to add “' + typed + '”.'
-        : 'No apps found.');
-    }
-
-    const group = (title, apps) => {
-      if (apps.length === 0) return;
-      const head = document.createElement('div');
-      head.className = 'wl-menu-head';
-      head.textContent = title;
-      $wlMenu.appendChild(head);
-      apps.forEach(addAppOption);
-    };
-    group('Running now', running);
-    group('Installed', installed);
-    highlightOption();
-  }
-
-  function addAppOption(app) {
-    const added = config.whitelist.some((n) => n.toLowerCase() === app.name.toLowerCase());
-    const hot = app.running && app.cpu >= parseFloat($cpuSlider.value);
-    const option = document.createElement('button');
-    option.type = 'button';
-    option.className = 'wl-option' + (added ? ' added' : '') + (hot ? ' hot' : '');
-    option.setAttribute('role', 'option');
-    option.dataset.index = String(menuOptions.length);
-    // Show the app's own name when it differs from the process name that
-    // gets excluded ("Visual Studio Code" · code); otherwise just the process.
-    const label = app.label && app.label.toLowerCase() !== app.name.toLowerCase() ? app.label : '';
-    const text = label
-      ? `<span class="wl-option-label">${escapeHTML(label)}</span><span class="wl-option-exe">${escapeHTML(app.name)}</span>`
-      : `<span class="wl-option-name">${escapeHTML(app.name)}</span>`;
-    const meta = added ? 'Excluded' : app.running ? Math.round(app.cpu) + '% CPU' : '';
-    option.innerHTML = `<span class="wl-option-text">${text}</span><span class="wl-option-meta">${meta}</span>`;
-    // mousedown, not click: keeps focus in the box so the menu doesn't blur shut.
-    option.addEventListener('mousedown', (e) => {
-      e.preventDefault();
-      if (!added) pickApp(app.name);
-    });
-    $wlMenu.appendChild(option);
-    menuOptions.push(added ? null : app.name);
-  }
-
-  function pickApp(name) {
-    addWhitelistName(name);
-    $wlInput.value = '';
-    closeAppMenu();
-  }
-
-  function highlightOption() {
-    $wlMenu.querySelectorAll('.wl-option').forEach((el) => {
-      el.classList.toggle('active', Number(el.dataset.index) === activeOption);
-    });
-    const active = $wlMenu.querySelector('.wl-option.active');
-    if (active) active.scrollIntoView({ block: 'nearest' });
-  }
-
-  function moveActive(step) {
-    if (!menuOptions.some((n) => n)) return;
-    let i = activeOption;
-    do {
-      i = (i + step + menuOptions.length) % menuOptions.length;
-    } while (!menuOptions[i]);
-    activeOption = i;
-    highlightOption();
-  }
-
   $wlInput.addEventListener('keydown', (e) => {
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      if (isMenuOpen()) moveActive(1); else openAppMenu();
-    } else if (e.key === 'ArrowUp' && isMenuOpen()) {
-      e.preventDefault();
-      moveActive(-1);
-    } else if (e.key === 'Enter') {
-      e.preventDefault();
-      if (isMenuOpen() && activeOption >= 0 && menuOptions[activeOption]) {
-        pickApp(menuOptions[activeOption]);
-      } else {
-        addWhitelistEntry();
-      }
-    } else if (e.key === 'Escape' && isMenuOpen()) {
-      e.preventDefault();
-      e.stopPropagation(); // close the menu only, not the settings window
-      closeAppMenu();
-    }
-  });
-  $wlInput.addEventListener('input', () => {
-    activeOption = -1;
-    if (isMenuOpen()) renderAppMenu(); else openAppMenu();
-  });
-  $wlInput.addEventListener('click', openAppMenu);
-  $wlInput.addEventListener('blur', closeAppMenu);
-  $wlToggle.addEventListener('mousedown', (e) => {
-    e.preventDefault();
-    if (isMenuOpen()) {
-      closeAppMenu();
-    } else {
-      $wlInput.focus();
-      openAppMenu();
-    }
+    if (e.key === 'Enter') addWhitelistEntry();
   });
 
   // ── Slider events ──
