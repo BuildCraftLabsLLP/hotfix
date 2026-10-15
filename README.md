@@ -22,7 +22,7 @@ Claude extensions, AI tools, and background daemons run rogue — consuming 50�
 |----------|----------|-------------|
 | **macOS** | [Hotfix.dmg](https://github.com/buildcraftlabs/hotfix/releases/latest) | macOS 13+ · Apple Silicon or Intel |
 | **Windows** | [Hotfix-Setup.exe](https://github.com/buildcraftlabs/hotfix/releases/latest) | Windows 11 · x64 |
-| **Linux** _(test build)_ | [Hotfix-dev-Linux-x86_64.deb](https://github.com/VarunSharma13/hotfix/releases/tag/linux-test-v1.0.12) (also `.rpm`, `.tar.gz`) | x86-64 or arm64 · a desktop with a system tray |
+| **Linux** _(test build)_ | [Hotfix-dev-Linux-x86_64.deb](https://github.com/VarunSharma13/hotfix/releases/tag/linux-test-v1.0.13) (also `.rpm`, `.tar.gz`) | x86-64 or arm64 · a desktop with a system tray |
 
 > **Windows:** the installer is per-user (no admin) — it installs to `%LOCALAPPDATA%\Programs\Hotfix`, adds an uninstaller to **Apps & features**, and updates itself silently in the background. Delete the downloaded `Hotfix-Setup.exe` once it's installed.
 
