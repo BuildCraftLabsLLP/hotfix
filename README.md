@@ -35,6 +35,10 @@ Claude extensions, AI tools, and background daemons run rogue — consuming 50�
 
 > **macOS:** Not yet notarized — right-click → **Open** on first launch to bypass Gatekeeper.
 
+## Hotfix Server
+
+For servers there's **Hotfix Server** (`hotfixd`): a headless system service for Linux, Windows Server and macOS that watches every user's processes, starts in a report-only mode, and kills runaways once you switch it to enforce. **$1 per server per month**, with a 14-day free trial on every server. See <https://hotfix.buildcraft.town/server.html> and [`server/README.md`](server/README.md).
+
 ## Features
 
 - **Native system tray** — Lives in your menu bar / taskbar, no Dock or taskbar icon
@@ -141,4 +145,4 @@ hotfix/
 
 ## License
 
-MIT © [BuildCraft Labs](https://github.com/BuildCraftLabsLLP)
+MIT © [BuildCraft Labs](https://github.com/BuildCraftLabsLLP), except Hotfix Server (`server/`), which is under the [Elastic License 2.0](server/LICENSE).

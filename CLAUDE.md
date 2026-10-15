@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Hotfix is a cross-platform (macOS + Windows + Linux) system tray app that monitors CPU usage and kills runaway processes before fans spin up. The macOS app is written in Swift/SwiftUI; the Windows and Linux apps are written in Go (two separate modules, `windows/` and `linux/`, that share no code).
 
+**Hotfix Server** (`server/`, binary `hotfixd`) is a separate, **paid** product: a headless system service for Linux, Windows and macOS ($1/server/month, 14-day trial, Razorpay). Its licensing API (`license-api/`) is a Node + PostgreSQL service on **Railway** at `license.buildcraft.town`. It is its own Go module (copies, never imports, code from `linux/`), is licensed **Elastic License 2.0** (`server/LICENSE`; everything else is MIT), and ships on its own `server-v*` releases. Full reference: `server/README.md`.
+
 ## Build Commands
 
 ### macOS
@@ -49,7 +51,18 @@ CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o ../dist/hotfix .
 
 > From a non-Linux machine, `GOOS=linux go vet ./...` type-checks the code **and** the tests, but the tests themselves only run on Linux (CI's `build-linux` job).
 
+### Hotfix Server
+```bash
+cd server
+go vet ./... && go test ./...          # native on Linux, Windows and macOS (incl. live process/kill tests)
+CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "-X main.version=1.0.0" .
+bash server/packaging/release.sh 0.0.0-test   # from the repo root: all archives + .deb/.rpm (needs nfpm)
+```
+> Without `-X main.licensePublicKey=…` it's a dev build: no license enforcement, and `install` refuses unless `HOTFIXD_ALLOW_DEV_INSTALL=1`.
+
 ## Release Process
+
+> **Hotfix Server** releases are separate: `gh release create server-vX.Y.Z --latest=false`. The Server workflow (`.github/workflows/server.yml`) builds, tests and attaches `HotfixServer-v…` assets, stamping the version from the tag (nothing to bump) and refusing to release without the repo variable `SERVER_LICENSE_PUBLIC_KEY`. Never mark one "latest": the desktop updaters and the `/dl/{mac,win,linux}` buttons follow the latest release. `build.yml` skips `server-v*` releases. Asset names never end in `.exe`/`.dmg`/`-linux-<arch>`, which the desktop updaters match (guard tests in `linux/` and `windows/updater_test.go`).
 
 1. Bump the version in: `Sources/Hotfix/UpdateChecker.swift` (`currentVersion`), `Resources/Info.plist` (`CFBundleShortVersionString` **and** bump `CFBundleVersion`), `windows/updater.go` (`currentVersion`), `linux/updater.go` (`currentVersion`), and the hardcoded version label in `windows/assets/settings.html` (About card). `windows/main.go` only references `updater.go`'s `currentVersion`, so no literal there. (Version-comparison fixtures in `windows/updater_test.go` are not app versions — leave them.) The exe-metadata version in `windows/versioninfo.json` and the installer version are **stamped automatically** from the release tag by CI — don't bump them by hand. The site's **download buttons carry no version** — they point at the counting redirect (`hotfix.buildcraft.town/dl/{mac,win}`), which resolves the latest release asset at request time, so there's nothing to bump in `docs/index.html`.
 2. Create a GitHub release tagged `v<version>` — the `Build` workflow runs automatically on `macos-latest`, `windows-2025`, and `ubuntu-latest`. Each release gets these version+OS-named assets: `Hotfix-v<version>-macOS.dmg`, `Hotfix-v<version>-Windows.exe` (the **raw exe**, downloaded by the in-place auto-updater), `Hotfix-Setup-v<version>-Windows.exe` (the **per-user installer**, what the website's Windows button links to), and for Linux, per CPU (`x86_64`, `arm64`), `Hotfix-v<version>-Linux-<arch>` (the **raw binary**, downloaded by the in-place auto-updater), `Hotfix-v<version>-Linux-<arch>.deb` and `.rpm` (double-click system-wide installers built by nfpm; the `.deb` is what `/dl/linux` redirects to), and `Hotfix-v<version>-Linux-<arch>.tar.gz` (binary + `install.sh`/`uninstall.sh` + icon, per-user install). There are no longer any plain `Hotfix.dmg` / `Hotfix.exe` assets. Pages serves `docs/` from `main`. (The legacy `update-site` CI job that rewrote versioned download URLs in `docs/index.html` is now a **no-op** — the buttons point at the version-less `/dl/*` redirect; see **Website & download counter** below.)
@@ -108,7 +121,25 @@ A single **CGO-free Go binary** with `//go:build linux` on every file (its own m
 - **`packaging/install.sh`** / **`uninstall.sh`** — Per-user install to `~/.local/bin/hotfix` plus an app-menu `.desktop` entry and icon (`icon/AppIcon.svg`, bundled as `hotfix.svg` by CI). No root. Shipped in the `.tar.gz`.
 - **`packaging/nfpm.yaml`** + **`hotfix.desktop`** — The `.deb`/`.rpm` (the Linux counterpart of `Setup.exe`: double-click to install), built in CI with a pinned nfpm (`NFPM_VERSION`, prebuilt binary verified against `NFPM_SHA256`). System-wide: `/usr/bin/hotfix`, `/usr/share/applications/hotfix.desktop`, `/usr/share/icons/hicolor/scalable/apps/hotfix.svg`; depends on WebKitGTK 4.1 (`libwebkit2gtk-4.1-0` / soname for rpm). nfpm doesn't expand variables in file paths, so CI copies each arch's binary to the fixed `dist/nfpm/hotfix` first; `ARCH`/`VERSION` come from env (dev builds get `<currentVersion>-dev.<run number>` → `~dev.N`, so each test build upgrades the last). CI's "Test packages" step installs the `.deb` on the runner, checks the files, and removes it. The Linux CI job is a per-CPU matrix on native `ubuntu-22.04` / `ubuntu-22.04-arm` runners (glibc baseline 2.35).
 
+### Hotfix Server (`server/`)
+
+One CGO-free Go binary, `hotfixd`, per OS/CPU; `package main` with build-tagged per-OS files. See `server/README.md` for the user-facing reference.
+
+- **`monitor.go`** — the decision engine (adapted from `linux/monitor.go` `evaluate`) as a `Monitor` struct with OS hooks, so its rules are unit-tested everywhere. Hot processes are keyed by **PID + start time**. Never touches kernel threads, reserved PIDs, itself or its children, `protected_<os>.go` lists, the `whitelist`, `protect_users`/`only_users`, or containers with `skip_containers`. Restart-loop backoff: 3 kills of one name within an hour → left alone for the rest of the hour. `mode` `monitor` (the default) only logs `would kill`.
+- **`proc_<os>.go`** — process sources and killing. Linux: `/proc` (from `linux/procstat.go`), kernel threads via PF_KTHREAD, kill via **pidfd** (TERM → grace → KILL). Windows: Toolhelp + `GetProcessTimes` **without** a session filter (the service runs in session 0), `TerminateProcess` through one handle after checking its creation time. macOS: sysctl `kern.proc.all` + libproc `proc_pidinfo` via **purego** (Mach time × `mach_timebase_info`). CPU % = percent of one core on all three.
+- **`engine.go`** — the 5 s loop: reload config on change, sample, act, write `status.json` (world-readable, so `hotfixd status` needs no elevation). Enforce mode is downgraded to monitor-only when not licensed.
+- **`config.go`** — JSON config, validated, atomic writes, reloaded on mtime change (last good config kept). `hotfixd config set` writes it; the service picks it up.
+- **`service*.go`** — kardianos/service: systemd (our hardened `packaging/hotfixd.service`, also shipped by the .deb/.rpm; with a packaged unit `hotfixd install` just runs `systemctl enable --now`), Windows SCM (LocalSystem, delayed start, restart on failure, Event Log; `%ProgramData%\Hotfix Server` ACL'd), launchd LaunchDaemon `town.buildcraft.hotfixd`.
+- **`license.go`** / **`license_cli.go`** / **`fingerprint_<os>.go`** — client licensing, adapted from the old desktop licensing (git `1c713ee`): Ed25519 tokens (`product: "server"`) verified with the key stamped by `-X main.licensePublicKey`. Fingerprint = HMAC of machine-id / MachineGuid / IOPlatformUUID; a random `instance_id` (re-minted when the fingerprint changes) is the seat identity. `licenseManager` refreshes every 6 h (seat + secret, or the trial), auto-activates from `HOTFIXD_LICENSE_KEY`/`license_key_file`, tolerates 7 days offline, and never overwrites a concurrent CLI change to `license.json`.
+- **`packaging/`** — `release.sh` (all archives, .deb/.rpm via nfpm, SHA256SUMS), `nfpm.yaml` + install/remove scripts, `install.sh`/`install.ps1` (and uninstall) for the archives, default `config.json` (a test keeps it equal to `defaultConfig()`).
+
+### Hotfix Server licensing API (`license-api/`, Railway)
+
+A Node 24 service (`src/server.js`, Dockerfile, Railway config in `.railway/railway.ts`) on Railway at **`license.buildcraft.town`**, backed by **Railway PostgreSQL** (`src/db.js`: node-postgres in production, PGlite in tests; `migrations/*.sql` applied at startup). `src/app.js` is the fetch-style handler: buy/checkout/success (keys shown once, only SHA-256 hashes stored), activate/refresh/deactivate (seat leases; activation locks the license row `FOR UPDATE` so concurrent activations can't oversell), trial (per fingerprint, per-network daily cap), manage, recover, Razorpay webhook (signature + re-fetch). Client IP = `X-Real-IP` from Railway's edge, so the subdomain must be DNS-only (not Cloudflare-proxied). Tests: `cd license-api && npm test` (PGlite; set `TEST_DATABASE_URL` for real Postgres, as CI does). Setup: `license-api/README.md`.
+
 ### Website & download counter (`docs/`, `worker/`)
+
+- **Hotfix Server pages**: `docs/server.html` (product page, linked from the main nav; Buy/Manage go to `license.buildcraft.town`). The download Worker also serves `/dl/server-*` from the newest `server-v*` release (never "latest"; last good link kept in KV).
 
 The marketing site lives in `docs/` (served by GitHub Pages from `main` at `hotfix.buildcraft.town`). Its Download buttons point at **`hotfix.buildcraft.town/dl/mac`** and **`/dl/win`** and **`/dl/linux`** (the `.deb`; the Worker also serves **`/dl/linux-rpm`**, **`/dl/linux-tar`** and **`/dl/linux-arm64`**, linked from the download note), handled by a Cloudflare Worker in `worker/` (`worker/src/worker.js`, config `worker/wrangler.toml`):
 
@@ -120,6 +151,7 @@ The marketing site lives in `docs/` (served by GitHub Pages from `main` at `hotf
 ## Key Constraints
 
 - **Tests** — Go unit tests live in `windows/*_test.go` (build-tagged `//go:build windows`). They run on the Windows CI runner via `go test ./...`. Swift tests run via `swift test` on the macOS runner. There is no way to execute the Windows tests locally on macOS. The Linux tests live in `linux/*_test.go` (build-tagged `//go:build linux`) and run on the Ubuntu CI runner; they can't be executed on Windows or macOS either.
+- **Hotfix Server tests** (`server/*_test.go`) are mostly untagged and run natively on every OS, including on Windows locally; CI (`server.yml`) also runs real service install/kill/uninstall cycles on each OS and a licensing end-to-end run. Licensing API tests: `cd license-api && npm test` (Node 24+).
 - **Version must be bumped in multiple files** — forgetting one will cause the update checker to behave incorrectly or CI to produce a mismatched binary.
 - macOS binary is **not notarized**; users must right-click → Open on first launch.
 - Windows build sets `-H windowsgui`, so `fmt.Print` / `log` output goes nowhere — use the file logger (`initLog` / `logf`).

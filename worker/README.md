@@ -44,3 +44,14 @@ curl "https://hotfix.buildcraft.town/dl/stats?key=YOUR_TOKEN"
 
 `count:mac` / `count:win` are lifetime totals; the dated keys are per-day
 buckets for trend lines.
+
+## Hotfix Server downloads
+
+This Worker also serves Hotfix Server downloads:
+`/dl/server-linux` (.deb), `-linux-rpm`, `-linux-tar`, `-linux-arm64`
+(+ `-rpm`, `-tar`), `/dl/server-windows` (+ `-arm64`), `/dl/server-macos`
+(Apple Silicon), `/dl/server-macos-intel`. They take the newest `server-v*`
+release (those are never "latest"), remembering the last good link in KV for
+when GitHub's API is rate-limited.
+
+Hotfix Server licensing runs on Railway, not here: see `license-api/README.md`.

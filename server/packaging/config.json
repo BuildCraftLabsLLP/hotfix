@@ -1,0 +1,13 @@
+{
+  "mode": "monitor",
+  "cpu_threshold": 90,
+  "kill_duration": 300,
+  "term_grace_seconds": 10,
+  "whitelist": [],
+  "protect_users": [],
+  "only_users": [],
+  "skip_containers": false,
+  "webhook_url": "",
+  "https_proxy": "",
+  "license_key_file": ""
+}

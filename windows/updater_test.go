@@ -139,3 +139,18 @@ func TestCurrentVersionIsSemver(t *testing.T) {
 		t.Errorf("currentVersion %q parses as 0.0.0 — check the constant", currentVersion)
 	}
 }
+
+// Hotfix Server's release assets (server.yml) must never be taken for a
+// desktop update, even if a server release ever became "latest".
+func TestPickRawExeURL_IgnoresServerAssets(t *testing.T) {
+	var server []githubAsset
+	for _, arch := range []string{"x86_64", "arm64"} {
+		for _, name := range []string{"linux-" + arch + ".tar.gz", "linux-" + arch + ".deb", "linux-" + arch + ".rpm", "windows-" + arch + ".zip", "macos-" + arch + ".tar.gz"} {
+			server = append(server, githubAsset{Name: "HotfixServer-v1.0.0-" + name, BrowserDownloadURL: "https://example/server"})
+		}
+	}
+	server = append(server, githubAsset{Name: "HotfixServer-v1.0.0-SHA256SUMS", BrowserDownloadURL: "https://example/server"})
+	if got := pickRawExeURL(server); got != "" {
+		t.Errorf("picked a server asset: %q", got)
+	}
+}

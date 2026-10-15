@@ -1,0 +1,403 @@
+name: Server
+
+# Hotfix Server (server/, hotfixd). Separate from the desktop Build workflow:
+# it ships on its own server-v* releases, which build.yml skips.
+
+on:
+  push:
+    paths: ["server/**", "license-api/**", ".github/workflows/server.yml"]
+  pull_request:
+    paths: ["server/**", "license-api/**", ".github/workflows/server.yml"]
+  release:
+    types: [created]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Unit + live tests natively on every OS/CPU, then a real end-to-end run:
+  # install the service, start a CPU hog, switch to enforce, and check hotfixd
+  # kills it.
+  test:
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, 'server-v')
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, windows-2025, macos-latest, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      - name: Vet and test
+        shell: bash
+        run: |
+          # (Windows checks out CRLF line endings, which gofmt would flag.)
+          if [ "$RUNNER_OS" != Windows ]; then
+            test -z "$(gofmt -l .)" || { gofmt -l .; echo "::error::gofmt needed"; exit 1; }
+          fi
+          go vet ./...
+          go test -count=1 -v ./...
+
+      - name: Build
+        shell: bash
+        env:
+          CGO_ENABLED: 0
+        run: go build -trimpath -ldflags "-s -w -X main.version=0.0.0-ci.${{ github.run_number }}" -o hotfixd$([ "$RUNNER_OS" = Windows ] && echo .exe) .
+
+      - name: Service end-to-end (Linux, macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -x
+          sudo install -m 0755 hotfixd /usr/local/bin/hotfixd
+          hotfixd version
+          sudo HOTFIXD_ALLOW_DEV_INSTALL=1 hotfixd install
+          if [ "$RUNNER_OS" = Linux ]; then systemctl is-active hotfixd; systemctl cat hotfixd | head -20
+          else sudo launchctl print system/town.buildcraft.hotfixd | head -15; fi
+
+          # Fresh installs only watch.
+          hotfixd config show | grep '"mode": "monitor"'
+          sudo hotfixd config set cpu_threshold 50
+          sudo hotfixd config set kill_duration 5
+          sudo hotfixd config set term_grace_seconds 2
+
+          # A CPU hog owned by the runner user. Double-forked so it's reaped by
+          # init once killed (a zombie would still answer kill -0).
+          ( yes > /dev/null & echo $! > /tmp/hog.pid )
+          HOG=$(cat /tmp/hog.pid)
+
+          # Monitor mode: it must survive and be reported. (Polled: on a busy
+          # runner the hog can dip under the threshold, restarting its 5 s.)
+          for i in $(seq 1 90); do
+            sudo hotfixd status > /tmp/status.txt
+            grep -q would_kill /tmp/status.txt && break
+            sleep 1
+          done
+          cat /tmp/status.txt
+          kill -0 "$HOG"
+          grep -q would_kill /tmp/status.txt
+
+          # Enforce: it must die.
+          sudo hotfixd config set mode enforce
+          for i in $(seq 1 40); do kill -0 "$HOG" 2>/dev/null || break; sleep 1; done
+          if kill -0 "$HOG" 2>/dev/null; then
+            kill "$HOG"
+            echo "::error::hotfixd did not kill the CPU hog"
+            if [ "$RUNNER_OS" = Linux ]; then sudo journalctl -u hotfixd --no-pager | tail -60; fi
+            sudo cat "/var/log/hotfix-server/hotfixd.log" "/Library/Logs/Hotfix Server/hotfixd.log" 2>/dev/null | tail -60
+            exit 1
+          fi
+          hotfixd status | tee /tmp/status.txt   # readable without root
+          grep -q killed /tmp/status.txt
+
+          sudo hotfixd uninstall
+          if [ "$RUNNER_OS" = Linux ]; then ! systemctl is-active hotfixd; fi
+          hotfixd status | grep -i "not installed"
+
+      - name: Service end-to-end (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = "C:\Program Files\Hotfix Server"
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          Copy-Item hotfixd.exe $dir
+          $h = "$dir\hotfixd.exe"
+          & $h version
+          $env:HOTFIXD_ALLOW_DEV_INSTALL = '1'
+          & $h install; if ($LASTEXITCODE) { exit 1 }
+          sc.exe query hotfixd
+          & $h config show | Select-String '"mode": "monitor"' | Out-Null
+          & $h config set cpu_threshold 50
+          & $h config set kill_duration 5
+
+          $hog = Start-Process pwsh -ArgumentList '-NoProfile','-Command','while($true){}' -PassThru -WindowStyle Hidden
+          for ($i = 0; $i -lt 90; $i++) {
+            $st = & $h status | Out-String
+            if ($st -match 'would_kill') { break }
+            Start-Sleep 1
+          }
+          $st
+          if ($hog.HasExited) { throw "the hog was killed in monitor mode" }
+          if (-not ($st -match 'would_kill')) { throw "no would_kill reported" }
+
+          & $h config set mode enforce
+          for ($i = 0; $i -lt 40 -and -not $hog.HasExited; $i++) { Start-Sleep 1 }
+          if (-not $hog.HasExited) {
+            Stop-Process $hog -Force
+            Get-Content "C:\ProgramData\Hotfix Server\logs\hotfixd.log" -Tail 60
+            throw "hotfixd did not kill the CPU hog"
+          }
+          & $h status | Tee-Object -Variable st
+          if (-not ($st -match 'killed')) { throw "no kill reported" }
+          Get-WinEvent -LogName Application -MaxEvents 20 | Where-Object ProviderName -eq hotfixd | Format-Table TimeCreated, Message -AutoSize
+
+          & $h uninstall; if ($LASTEXITCODE) { exit 1 }
+          sc.exe query hotfixd; if ($LASTEXITCODE -eq 0) { throw "service still registered" }
+          exit 0  # sc.exe query failing above is the expected outcome
+
+  # The licensing API (license-api/): tests on PGlite and on PostgreSQL 18 (as
+  # on Railway), the real entry point (server.js) against it, the Docker image
+  # Railway deploys, and the nightly backup (backup/) end to end.
+  api:
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, 'server-v')
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    defaults:
+      run:
+        working-directory: license-api
+    env:
+      PG_URL: postgres://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: license-api/package-lock.json
+      - run: npm ci
+      - name: Tests on PGlite
+        run: npm test
+      - name: Tests on PostgreSQL 18
+        run: TEST_DATABASE_URL="$PG_URL" npm test
+      - name: server.js against PostgreSQL (start, migrate, serve, restart)
+        run: |
+          set -x
+          export DATABASE_URL="$PG_URL" PORT=8080 RAZORPAY_KEY_ID=rzp_test_x RAZORPAY_KEY_SECRET=x RAZORPAY_WEBHOOK_SECRET=x RAZORPAY_SERVER_PLAN_ID=plan_x
+          export SERVER_LICENSE_SIGNING_KEY="$(node scripts/gen-license-key.mjs | sed -n 5p)"
+          for run in 1 2; do   # the second start re-runs migrations: must be a no-op
+            node src/server.js > /tmp/srv.log 2>&1 &
+            PID=$!
+            for i in $(seq 1 30); do curl -fs localhost:8080/healthz && break; sleep 1; done
+            curl -fs -X POST localhost:8080/api/server/trial -H 'Content-Type: application/json' \
+              -d "{\"fingerprint\":\"$(printf 'a%.0s' $(seq 64))\"}" | grep -q token
+            curl -fs localhost:8080/api/server/buy | grep -q 'per server per month'
+            kill $PID; wait $PID || true
+          done
+          cat /tmp/srv.log
+          # Billing off (no Razorpay variables): starts, trials work, buying says "soon".
+          unset RAZORPAY_KEY_ID RAZORPAY_KEY_SECRET RAZORPAY_WEBHOOK_SECRET RAZORPAY_SERVER_PLAN_ID
+          node src/server.js > /tmp/srv.log 2>&1 &
+          PID=$!
+          for i in $(seq 1 30); do curl -fs localhost:8080/healthz && break; sleep 1; done
+          curl -fs -X POST localhost:8080/api/server/trial -H 'Content-Type: application/json' \
+            -d "{\"fingerprint\":\"$(printf 'b%.0s' $(seq 64))\"}" | grep -q token
+          curl -fs localhost:8080/api/server/buy | grep -q 'Purchases open soon'
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST localhost:8080/api/server/checkout)" = 503
+          kill $PID; wait $PID || true
+          grep -q 'billing off' /tmp/srv.log
+      - name: Docker image builds
+        run: docker build -t hotfix-license-api .
+      # backup/: a real nightly run (dump, encrypt, upload, prune) against moto
+      # standing in for the Railway bucket, then a restore into a fresh database
+      # (and again over existing data) that must match table for table.
+      - name: Nightly backup and restore
+        run: |
+          set -x
+          sudo apt-get install -y -q age > /dev/null
+          pipx install -q "moto[server]==5.2.3"
+          nohup moto_server -p 9000 > /tmp/moto.log 2>&1 &
+          for i in $(seq 1 30); do curl -fs localhost:9000 > /dev/null && break; sleep 1; done
+          export AWS_ACCESS_KEY_ID=ci AWS_SECRET_ACCESS_KEY=ci-secret AWS_DEFAULT_REGION=us-east-1
+          S3="aws --endpoint-url http://localhost:9000 s3api"
+          $S3 create-bucket --bucket backups > /dev/null
+          echo stale > /tmp/old.age
+          $S3 put-object --bucket backups --key license-db-2000-01-01T0000Z.dump.age --body /tmp/old.age > /dev/null
+          age-keygen -o /tmp/age.key 2> /dev/null && chmod 644 /tmp/age.key
+          docker build -t pg-backup backup
+          docker run --rm --network host -e DATABASE_URL="$PG_URL" -e BACKUP_AGE_RECIPIENT="$(age-keygen -y /tmp/age.key)" \
+            -e BUCKET=backups -e ENDPOINT=http://localhost:9000 -e ACCESS_KEY_ID=ci -e SECRET_ACCESS_KEY=ci-secret \
+            -e REGION=us-east-1 -e S3_ADDRESSING_STYLE=path pg-backup | tee /tmp/backup.log
+          grep -q 'deleted license-db-2000-01-01T0000Z.dump.age' /tmp/backup.log
+          KEY=$($S3 list-objects-v2 --bucket backups --query 'Contents[].Key' --output text)
+          test "$(echo "$KEY" | wc -w)" = 1
+          $S3 get-object --bucket backups --key "$KEY" /tmp/db.dump.age > /dev/null
+          head -c 21 /tmp/db.dump.age | grep -q 'age-encryption.org/v1'   # encrypted, not a plain dump
+          ! grep -q PGDMP /tmp/db.dump.age
+          psql "$PG_URL" -c 'CREATE DATABASE restored'
+          RESTORED="${PG_URL%/postgres}/restored"
+          for run in 1 2; do   # into an empty database, then over existing data
+            docker run --rm --network host -v /tmp:/work:ro pg-backup restore.sh /work/db.dump.age /work/age.key "$RESTORED"
+            total=0
+            for t in licenses subscriptions seats kv schema_migrations; do
+              n=$(psql "$PG_URL" -tAc "select count(*) from $t")
+              test "$n" = "$(psql "$RESTORED" -tAc "select count(*) from $t")"
+              total=$((total + n))
+            done
+            test "$total" -gt 0
+          done
+          # A wrong key can't decrypt it.
+          age-keygen -o /tmp/other.key 2> /dev/null && chmod 644 /tmp/other.key
+          ! docker run --rm --network host -v /tmp:/work:ro pg-backup restore.sh /work/db.dump.age /work/other.key "$RESTORED"
+
+  # hotfixd (a real, installed service) against the real licensing API run
+  # locally on PostgreSQL (license-api/test/harness.mjs) with a zero-day trial: while
+  # unlicensed, enforce mode must NOT kill; after `license activate` it must.
+  license-e2e:
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, 'server-v')
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: Start the licensing API locally
+        run: |
+          mkdir -p /tmp/lic
+          (cd license-api && npm ci)
+          TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres TRIAL_DAYS=0 \
+            nohup node license-api/test/harness.mjs 8787 /tmp/lic > /tmp/lic/api.log 2>&1 &
+          for i in $(seq 1 40); do [ -s /tmp/lic/license-key ] && break; sleep 0.5; done
+          cat /tmp/lic/api.log
+      - name: Build hotfixd against it
+        working-directory: server
+        env:
+          CGO_ENABLED: 0
+        run: |
+          go build -ldflags "-X main.version=0.0.0-ci -X main.licensePublicKey=$(cat /tmp/lic/public-key) -X main.licenseAPIBase=http://127.0.0.1:8787/api/server" -o hotfixd .
+          sudo install -m 0755 hotfixd /usr/local/bin/hotfixd
+          hotfixd version
+          ! hotfixd version | grep -q "development build"
+      - name: Unlicensed never kills; licensed does
+        run: |
+          set -x
+          sudo hotfixd install
+          sudo hotfixd config set cpu_threshold 50
+          sudo hotfixd config set kill_duration 5
+          sudo hotfixd config set mode enforce
+          ( yes > /dev/null & echo $! > /tmp/hog.pid )
+          HOG=$(cat /tmp/hog.pid)
+
+          # The trial is over (TRIAL_DAYS=0) and there's no seat: enforce must
+          # only report.
+          for i in $(seq 1 90); do
+            sudo hotfixd status > /tmp/st.txt
+            grep -q would_kill /tmp/st.txt && break
+            sleep 1
+          done
+          cat /tmp/st.txt
+          kill -0 "$HOG"
+          grep -q "but not licensed" /tmp/st.txt
+          grep -q "NOT licensed: the 14-day trial has ended" /tmp/st.txt
+          grep -q would_kill /tmp/st.txt
+
+          # A bad key is refused; the right one takes the license's seat.
+          ! sudo hotfixd license activate HFXS-00000-00000-00000-00000
+          sudo hotfixd license activate "$(cat /tmp/lic/license-key)"
+          for i in $(seq 1 40); do kill -0 "$HOG" 2>/dev/null || break; sleep 1; done
+          if kill -0 "$HOG" 2>/dev/null; then kill "$HOG"; sudo journalctl -u hotfixd --no-pager | tail -40; exit 1; fi
+          sudo hotfixd status | tee /tmp/st.txt
+          grep -q "License:   licensed" /tmp/st.txt
+          grep -q killed /tmp/st.txt
+          sudo cat /var/lib/hotfix-server/license.json | grep -q seat_
+          [ "$(stat -c %a /var/lib/hotfix-server/license.json)" = 600 ]
+
+          sudo hotfixd license deactivate
+          sudo hotfixd uninstall
+          cat /tmp/lic/api.log
+
+  # Release packages (server/packaging/release.sh): archives for every OS/CPU
+  # and .deb/.rpm, then the .deb installed and removed on this runner.
+  package:
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, 'server-v')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: Install nfpm (pinned, checksum-verified)
+        env:
+          NFPM_VERSION: 2.48.0
+          NFPM_SHA256: 6d7f9a28b2f397934403950fcbba83f598b08d02edbe79a0815b3b4897341750
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/nfpm.tar.gz" "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz"
+          echo "${NFPM_SHA256}  $RUNNER_TEMP/nfpm.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/nfpm.tar.gz" -C "$RUNNER_TEMP" nfpm
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: Build and package
+        env:
+          LICENSE_PUBLIC_KEY: ${{ vars.SERVER_LICENSE_PUBLIC_KEY }}
+          # A release must enforce licensing: refuse to build one without the key.
+          REQUIRE_LICENSE_KEY: ${{ github.event_name == 'release' && '1' || '' }}
+          TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || format('0.0.0-ci.{0}', github.run_number) }}
+        run: |
+          bash server/packaging/release.sh "$TAG"
+          bin=$(ls dist/server/HotfixServer-*-linux-x86_64/hotfixd)
+          "$bin" version
+          if [ -n "$LICENSE_PUBLIC_KEY" ] && "$bin" version | grep -q "development build"; then
+            echo "::error::the license public key was not compiled in"; exit 1
+          fi
+      - name: Test the .deb and the archives
+        run: |
+          set -x
+          cd dist/server/out
+          tar -tzf HotfixServer-*-linux-x86_64.tar.gz | grep -q /install.sh
+          tar -tzf HotfixServer-*-macos-arm64.tar.gz | grep -q /hotfixd
+          unzip -l HotfixServer-*-windows-x86_64.zip | grep -q install.ps1
+          sha256sum -c HotfixServer-*-SHA256SUMS
+          ! ls | grep -Ei '\.(exe|dmg)$'          # names the desktop updaters look for
+          sudo apt-get install -y ./HotfixServer-*-linux-x86_64.deb
+          systemctl is-active hotfixd
+          test -f /etc/hotfix-server/config.json
+          systemctl show hotfixd -p ExecStart | grep -q /usr/bin/hotfixd
+          sleep 6
+          hotfixd status | tee /tmp/st.txt
+          grep -q "Service:   running" /tmp/st.txt
+          sudo HOTFIXD_ALLOW_DEV_INSTALL=1 hotfixd install | grep -qi "running"   # with the packaged unit: no second unit
+          test ! -e /etc/systemd/system/hotfixd.service
+          sudo apt-get remove -y hotfix-server
+          ! systemctl is-active hotfixd
+          test -f /etc/hotfix-server/config.json     # kept until purge
+          sudo apt-get purge -y hotfix-server
+          test ! -e /etc/hotfix-server/config.json
+          test ! -e /var/lib/hotfix-server
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hotfix-server-packages
+          path: dist/server/out/
+
+  # server-v* releases only, after every test passed: attach the packages.
+  # Never "latest": the desktop apps' updaters and the website's download
+  # buttons follow the latest release.
+  publish:
+    if: github.event_name == 'release' && startsWith(github.event.release.tag_name, 'server-v')
+    needs: [test, api, license-e2e, package]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: hotfix-server-packages
+          path: out
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: out/*
+          make_latest: false

@@ -21,6 +21,8 @@
 const REPO = "BuildCraftLabsLLP/hotfix";
 const LATEST_API = `https://api.github.com/repos/${REPO}/releases/latest`;
 const LATEST_PAGE = `https://github.com/${REPO}/releases/latest`;
+const RELEASES_API = `https://api.github.com/repos/${REPO}/releases?per_page=30`;
+const SERVER_PAGE = "https://hotfix.buildcraft.town/server.html";
 const ASSET_TTL = 300; // seconds to cache the resolved asset URL
 
 // platform -> how to find its asset: `pick` matches a name in the API's asset
@@ -51,6 +53,19 @@ const PLATFORMS = {
     pick: (n) => n.endsWith("-Linux-arm64.tar.gz"),
     name: (tag) => `Hotfix-${tag}-Linux-arm64.tar.gz`,
   },
+
+  // Hotfix Server: its own server-v* releases, never marked "latest", so these
+  // look through the release list (see fromServerReleases).
+  "server-linux": { server: true, pick: (n) => n.endsWith("-linux-x86_64.deb") },
+  "server-linux-rpm": { server: true, pick: (n) => n.endsWith("-linux-x86_64.rpm") },
+  "server-linux-tar": { server: true, pick: (n) => n.endsWith("-linux-x86_64.tar.gz") },
+  "server-linux-arm64": { server: true, pick: (n) => n.endsWith("-linux-arm64.deb") },
+  "server-linux-arm64-rpm": { server: true, pick: (n) => n.endsWith("-linux-arm64.rpm") },
+  "server-linux-arm64-tar": { server: true, pick: (n) => n.endsWith("-linux-arm64.tar.gz") },
+  "server-windows": { server: true, pick: (n) => n.endsWith("-windows-x86_64.zip") },
+  "server-windows-arm64": { server: true, pick: (n) => n.endsWith("-windows-arm64.zip") },
+  "server-macos": { server: true, pick: (n) => n.endsWith("-macos-arm64.tar.gz") },
+  "server-macos-intel": { server: true, pick: (n) => n.endsWith("-macos-x86_64.tar.gz") },
 };
 
 export default {
@@ -65,7 +80,7 @@ export default {
     if (!platform) return new Response("Not found", { status: 404 });
 
     // Last resort: the release page, where the file can be picked by hand.
-    const target = (await latestAsset(env, seg, platform)) || LATEST_PAGE;
+    const target = (await latestAsset(env, seg, platform)) || (platform.server ? SERVER_PAGE : LATEST_PAGE);
 
     // Count asynchronously so the redirect is instant.
     ctx.waitUntil(bump(env, seg));
@@ -81,7 +96,16 @@ async function latestAsset(env, key, platform) {
   const hit = await cache.match(cacheKey);
   if (hit) return (await hit.text()) || null;
 
-  const dlUrl = (await fromAPI(env, platform)) || (await fromLatestTag(platform));
+  let dlUrl;
+  if (platform.server) {
+    // Remember the last good link: there's no rate-limit-free fallback for
+    // non-latest releases.
+    dlUrl = await fromServerReleases(env, platform);
+    if (dlUrl) await env.HOTFIX_DL.put(`lastgood:${key}`, dlUrl);
+    else dlUrl = await env.HOTFIX_DL.get(`lastgood:${key}`);
+  } else {
+    dlUrl = (await fromAPI(env, platform)) || (await fromLatestTag(platform));
+  }
   if (dlUrl) {
     await cache.put(
       cacheKey,
@@ -89,6 +113,24 @@ async function latestAsset(env, key, platform) {
     );
   }
   return dlUrl;
+}
+
+// The newest published server-v* release's matching asset, or null.
+async function fromServerReleases(env, platform) {
+  const headers = { "User-Agent": "hotfix-dl-worker", Accept: "application/vnd.github+json" };
+  if (env.GITHUB_TOKEN) headers.Authorization = `Bearer ${env.GITHUB_TOKEN}`;
+  try {
+    const res = await fetch(RELEASES_API, { headers });
+    if (!res.ok) return null;
+    for (const rel of await res.json()) {
+      if (rel.draft || rel.prerelease || !/^server-v\d/.test(rel.tag_name || "")) continue;
+      const asset = (rel.assets || []).find((a) => platform.pick(a.name));
+      if (asset) return asset.browser_download_url;
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 // The asset's URL from the releases API, or null (rate-limited, down, or no

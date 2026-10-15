@@ -107,3 +107,23 @@ func TestTruncateAndTailLines(t *testing.T) {
 		t.Errorf("tailLines: %q", got)
 	}
 }
+
+// Hotfix Server's release assets (server.yml) must never be taken for a
+// desktop update, even if a server release ever became "latest".
+func TestPickRawBinaryURL_IgnoresServerAssets(t *testing.T) {
+	var server []githubAsset
+	for _, arch := range []string{"x86_64", "arm64"} {
+		for _, ext := range []string{".tar.gz", ".deb", ".rpm"} {
+			server = append(server, githubAsset{Name: "HotfixServer-v1.0.0-linux-" + arch + ext, BrowserDownloadURL: "https://example/server"})
+		}
+		server = append(server,
+			githubAsset{Name: "HotfixServer-v1.0.0-windows-" + arch + ".zip", BrowserDownloadURL: "https://example/server"},
+			githubAsset{Name: "HotfixServer-v1.0.0-macos-" + arch + ".tar.gz", BrowserDownloadURL: "https://example/server"})
+	}
+	server = append(server, githubAsset{Name: "HotfixServer-v1.0.0-SHA256SUMS", BrowserDownloadURL: "https://example/server"})
+	for _, arch := range []string{"amd64", "arm64"} {
+		if got := pickRawBinaryURL(server, arch); got != "" {
+			t.Errorf("%s: picked a server asset: %q", arch, got)
+		}
+	}
+}

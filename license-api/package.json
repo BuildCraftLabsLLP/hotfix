@@ -1,0 +1,21 @@
+{
+  "name": "hotfix-license-api",
+  "private": true,
+  "description": "Hotfix Server licensing API (license.buildcraft.town), deployed on Railway",
+  "license": "Elastic-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test test/app.test.mjs"
+  },
+  "dependencies": {
+    "pg": "^8.16.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.3.0",
+    "railway": "^3.16.0"
+  }
+}
