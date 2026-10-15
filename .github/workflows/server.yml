@@ -8,6 +8,8 @@ on:
     paths: ["server/**", "worker/src/server-api.js", "worker/test/server-api*.mjs", "worker/migrations/**", ".github/workflows/server.yml"]
   pull_request:
     paths: ["server/**", "worker/src/server-api.js", "worker/test/server-api*.mjs", "worker/migrations/**", ".github/workflows/server.yml"]
+  release:
+    types: [created]
   workflow_dispatch:
 
 permissions:
@@ -18,6 +20,7 @@ jobs:
   # install the service, start a CPU hog, switch to enforce, and check hotfixd
   # kills it.
   test:
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, 'server-v')
     strategy:
       fail-fast: false
       matrix:
@@ -134,6 +137,7 @@ jobs:
 
   # The licensing API (worker/src/server-api.js) against real SQLite (node:sqlite).
   api:
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, 'server-v')
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
@@ -146,6 +150,7 @@ jobs:
   # locally (worker/test/server-api-harness.mjs) with a zero-day trial: while
   # unlicensed, enforce mode must NOT kill; after `license activate` it must.
   license-e2e:
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, 'server-v')
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
@@ -205,29 +210,83 @@ jobs:
           sudo hotfixd uninstall
           cat /tmp/lic/api.log
 
-  # Every release target builds (CGO-free cross-compiles from Linux).
-  build:
+  # Release packages (server/packaging/release.sh): archives for every OS/CPU
+  # and .deb/.rpm, then the .deb installed and removed on this runner.
+  package:
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, 'server-v')
     runs-on: ubuntu-24.04
-    defaults:
-      run:
-        working-directory: server
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
-      - name: Cross-compile
+      - name: Install nfpm (pinned, checksum-verified)
         env:
-          CGO_ENABLED: 0
+          NFPM_VERSION: 2.48.0
+          NFPM_SHA256: 6d7f9a28b2f397934403950fcbba83f598b08d02edbe79a0815b3b4897341750
         run: |
-          for t in linux/amd64 linux/arm64 windows/amd64 windows/arm64 darwin/amd64 darwin/arm64; do
-            os=${t%/*}; arch=${t#*/}; ext=$([ "$os" = windows ] && echo .exe || true)
-            GOOS=$os GOARCH=$arch go build -trimpath -ldflags "-s -w -X main.version=0.0.0-ci.${{ github.run_number }}" \
-              -o "../dist/server/hotfixd-$os-$arch$ext" .
-          done
-          ls -la ../dist/server
+          curl -fsSL -o "$RUNNER_TEMP/nfpm.tar.gz" "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz"
+          echo "${NFPM_SHA256}  $RUNNER_TEMP/nfpm.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/nfpm.tar.gz" -C "$RUNNER_TEMP" nfpm
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+      - name: Build and package
+        env:
+          LICENSE_PUBLIC_KEY: ${{ vars.SERVER_LICENSE_PUBLIC_KEY }}
+          # A release must enforce licensing: refuse to build one without the key.
+          REQUIRE_LICENSE_KEY: ${{ github.event_name == 'release' && '1' || '' }}
+          TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || format('0.0.0-ci.{0}', github.run_number) }}
+        run: |
+          bash server/packaging/release.sh "$TAG"
+          bin=$(ls dist/server/HotfixServer-*-linux-x86_64/hotfixd)
+          "$bin" version
+          if [ -n "$LICENSE_PUBLIC_KEY" ] && "$bin" version | grep -q "development build"; then
+            echo "::error::the license public key was not compiled in"; exit 1
+          fi
+      - name: Test the .deb and the archives
+        run: |
+          set -x
+          cd dist/server/out
+          tar -tzf HotfixServer-*-linux-x86_64.tar.gz | grep -q /install.sh
+          tar -tzf HotfixServer-*-macos-arm64.tar.gz | grep -q /hotfixd
+          unzip -l HotfixServer-*-windows-x86_64.zip | grep -q install.ps1
+          sha256sum -c HotfixServer-*-SHA256SUMS
+          ! ls | grep -Ei '\.(exe|dmg)$'          # names the desktop updaters look for
+          sudo apt-get install -y ./HotfixServer-*-linux-x86_64.deb
+          systemctl is-active hotfixd
+          test -f /etc/hotfix-server/config.json
+          systemctl show hotfixd -p ExecStart | grep -q /usr/bin/hotfixd
+          sleep 6
+          hotfixd status | tee /tmp/st.txt
+          grep -q "Service:   running" /tmp/st.txt
+          sudo hotfixd install | grep -qi "running"   # with the packaged unit: no second unit
+          test ! -e /etc/systemd/system/hotfixd.service
+          sudo apt-get remove -y hotfix-server
+          ! systemctl is-active hotfixd
+          test -f /etc/hotfix-server/config.json     # kept until purge
+          sudo apt-get purge -y hotfix-server
+          test ! -e /etc/hotfix-server/config.json
+          test ! -e /var/lib/hotfix-server
       - uses: actions/upload-artifact@v4
         with:
-          name: hotfixd-binaries
-          path: dist/server/
+          name: hotfix-server-packages
+          path: dist/server/out/
+
+  # server-v* releases only, after every test passed: attach the packages.
+  # Never "latest": the desktop apps' updaters and the website's download
+  # buttons follow the latest release.
+  publish:
+    if: github.event_name == 'release' && startsWith(github.event.release.tag_name, 'server-v')
+    needs: [test, api, license-e2e, package]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: hotfix-server-packages
+          path: out
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: out/*
+          make_latest: false

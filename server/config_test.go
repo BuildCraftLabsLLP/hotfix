@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -133,5 +134,16 @@ func TestStoreReloadsOnChangeAndKeepsLastGood(t *testing.T) {
 	}
 	if s.Get().Mode != ModeEnforce {
 		t.Error("a broken file must not replace the last good config")
+	}
+}
+
+// The packages ship server/packaging/config.json; it must be the defaults.
+func TestPackagedConfigIsTheDefault(t *testing.T) {
+	c, err := readConfig(filepath.Join("packaging", "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(c, defaultConfig()) {
+		t.Fatalf("packaging/config.json differs from defaultConfig():\n%+v\n%+v", c, defaultConfig())
 	}
 }

@@ -131,6 +131,12 @@ func serviceCommand(cmd string) error {
 		if err := prepareDataDirs(); err != nil {
 			return err
 		}
+		if _, err := s.Status(); !errors.Is(err, service.ErrNotInstalled) {
+			// Already installed: just make sure it runs.
+			_ = service.Control(s, "start")
+			fmt.Println("Hotfix Server is already installed; it's running. (`hotfixd status` shows what it's doing.)")
+			return nil
+		}
 		if err := service.Control(s, "install"); err != nil {
 			return err
 		}
