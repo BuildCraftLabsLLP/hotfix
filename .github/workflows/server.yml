@@ -5,9 +5,9 @@ name: Server
 
 on:
   push:
-    paths: ["server/**", "worker/src/server-api.js", "worker/test/server-api.test.mjs", "worker/migrations/**", ".github/workflows/server.yml"]
+    paths: ["server/**", "worker/src/server-api.js", "worker/test/server-api*.mjs", "worker/migrations/**", ".github/workflows/server.yml"]
   pull_request:
-    paths: ["server/**", "worker/src/server-api.js", "worker/test/server-api.test.mjs", "worker/migrations/**", ".github/workflows/server.yml"]
+    paths: ["server/**", "worker/src/server-api.js", "worker/test/server-api*.mjs", "worker/migrations/**", ".github/workflows/server.yml"]
   workflow_dispatch:
 
 permissions:
@@ -56,7 +56,7 @@ jobs:
           set -x
           sudo install -m 0755 hotfixd /usr/local/bin/hotfixd
           hotfixd version
-          sudo hotfixd install
+          sudo HOTFIXD_ALLOW_DEV_INSTALL=1 hotfixd install
           if [ "$RUNNER_OS" = Linux ]; then systemctl is-active hotfixd; systemctl cat hotfixd | head -20
           else sudo launchctl print system/town.buildcraft.hotfixd | head -15; fi
 
@@ -104,6 +104,7 @@ jobs:
           Copy-Item hotfixd.exe $dir
           $h = "$dir\hotfixd.exe"
           & $h version
+          $env:HOTFIXD_ALLOW_DEV_INSTALL = '1'
           & $h install; if ($LASTEXITCODE) { exit 1 }
           sc.exe query hotfixd
           & $h config show | Select-String '"mode": "monitor"' | Out-Null
@@ -129,6 +130,7 @@ jobs:
 
           & $h uninstall; if ($LASTEXITCODE) { exit 1 }
           sc.exe query hotfixd; if ($LASTEXITCODE -eq 0) { throw "service still registered" }
+          exit 0  # sc.exe query failing above is the expected outcome
 
   # The licensing API (worker/src/server-api.js) against real SQLite (node:sqlite).
   api:
@@ -139,6 +141,69 @@ jobs:
         with:
           node-version: 24
       - run: node --test worker/test/server-api.test.mjs
+
+  # hotfixd (a real, installed service) against the real licensing API run
+  # locally (worker/test/server-api-harness.mjs) with a zero-day trial: while
+  # unlicensed, enforce mode must NOT kill; after `license activate` it must.
+  license-e2e:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: Start the licensing API locally
+        run: |
+          mkdir -p /tmp/lic
+          TRIAL_DAYS=0 nohup node worker/test/server-api-harness.mjs 8787 /tmp/lic > /tmp/lic/api.log 2>&1 &
+          for i in $(seq 1 40); do [ -s /tmp/lic/license-key ] && break; sleep 0.5; done
+          cat /tmp/lic/api.log
+      - name: Build hotfixd against it
+        working-directory: server
+        env:
+          CGO_ENABLED: 0
+        run: |
+          go build -ldflags "-X main.version=0.0.0-ci -X main.licensePublicKey=$(cat /tmp/lic/public-key) -X main.licenseAPIBase=http://127.0.0.1:8787/api/server" -o hotfixd .
+          sudo install -m 0755 hotfixd /usr/local/bin/hotfixd
+          hotfixd version
+          ! hotfixd version | grep -q "development build"
+      - name: Unlicensed never kills; licensed does
+        run: |
+          set -x
+          sudo hotfixd install
+          sudo hotfixd config set cpu_threshold 50
+          sudo hotfixd config set kill_duration 5
+          sudo hotfixd config set mode enforce
+          ( yes > /dev/null & echo $! > /tmp/hog.pid )
+          HOG=$(cat /tmp/hog.pid)
+
+          # The trial is over (TRIAL_DAYS=0) and there's no seat: enforce must
+          # only report.
+          sleep 25
+          kill -0 "$HOG"
+          sudo hotfixd status | tee /tmp/st.txt
+          grep -q "but not licensed" /tmp/st.txt
+          grep -q "NOT licensed: the 14-day trial has ended" /tmp/st.txt
+          grep -q would_kill /tmp/st.txt
+
+          # A bad key is refused; the right one takes the license's seat.
+          ! sudo hotfixd license activate HFXS-00000-00000-00000-00000
+          sudo hotfixd license activate "$(cat /tmp/lic/license-key)"
+          for i in $(seq 1 40); do kill -0 "$HOG" 2>/dev/null || break; sleep 1; done
+          if kill -0 "$HOG" 2>/dev/null; then kill "$HOG"; sudo journalctl -u hotfixd --no-pager | tail -40; exit 1; fi
+          sudo hotfixd status | tee /tmp/st.txt
+          grep -q "License:   licensed" /tmp/st.txt
+          grep -q killed /tmp/st.txt
+          sudo cat /var/lib/hotfix-server/license.json | grep -q seat_
+          [ "$(stat -c %a /var/lib/hotfix-server/license.json)" = 600 ]
+
+          sudo hotfixd license deactivate
+          sudo hotfixd uninstall
+          cat /tmp/lic/api.log
 
   # Every release target builds (CGO-free cross-compiles from Linux).
   build:

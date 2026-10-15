@@ -18,17 +18,19 @@ type statusHot struct {
 }
 
 type Status struct {
-	Version      string      `json:"version"`
-	PID          int         `json:"pid"`
-	Started      time.Time   `json:"started"`
-	Updated      time.Time   `json:"updated"`
-	Mode         string      `json:"mode"`
-	CPUThreshold float64     `json:"cpu_threshold"`
-	KillDuration float64     `json:"kill_duration"`
-	Processes    int         `json:"processes_seen"`
-	Hot          []statusHot `json:"hot"`
-	Events       []Event     `json:"recent_events"`
-	Warning      string      `json:"warning,omitempty"`
+	Version        string         `json:"version"`
+	PID            int            `json:"pid"`
+	Started        time.Time      `json:"started"`
+	Updated        time.Time      `json:"updated"`
+	Mode           string         `json:"mode"`            // as applied (monitor if unlicensed)
+	ConfiguredMode string         `json:"configured_mode"` // as set in config.json
+	License        licenseSummary `json:"license"`
+	CPUThreshold   float64        `json:"cpu_threshold"`
+	KillDuration   float64        `json:"kill_duration"`
+	Processes      int            `json:"processes_seen"`
+	Hot            []statusHot    `json:"hot"`
+	Events         []Event        `json:"recent_events"`
+	Warning        string         `json:"warning,omitempty"`
 }
 
 func statusPath() string { return filepath.Join(stateDir(), "status.json") }

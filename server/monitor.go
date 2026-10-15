@@ -71,6 +71,10 @@ type Monitor struct {
 	now         func() time.Time
 	onEvent     func(Event)
 
+	// monitorNote, when set, explains why enforce mode is reporting only
+	// (no license); set by the engine before each Step.
+	monitorNote string
+
 	mu        sync.Mutex
 	hot       map[procKey]*HotProcess
 	kills     map[string][]time.Time // name → recent kill times
@@ -257,8 +261,11 @@ func (m *Monitor) act(h *HotProcess, cfg Config) {
 
 	if cfg.Mode != ModeEnforce {
 		ev.Action = "would_kill"
-		logf("monitor: would kill %s (PID %d): %.1f%% CPU for %.0fs (monitor mode; run `hotfixd config set mode enforce` to kill)",
-			ev.Name, h.PID, h.CPU, ev.HotFor)
+		why := "monitor mode; run `hotfixd config set mode enforce` to kill"
+		if m.monitorNote != "" {
+			why = m.monitorNote
+		}
+		logf("monitor: would kill %s (PID %d): %.1f%% CPU for %.0fs (%s)", ev.Name, h.PID, h.CPU, ev.HotFor, why)
 		m.record(ev)
 		return
 	}

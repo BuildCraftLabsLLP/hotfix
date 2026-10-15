@@ -116,7 +116,7 @@ func serviceCommand(cmd string) error {
 	if err := needElevation(); err != nil {
 		return err
 	}
-	if version == "dev" && cmd == "install" && os.Getenv("HOTFIXD_ALLOW_DEV_INSTALL") == "" {
+	if !licenseEnforced() && cmd == "install" && os.Getenv("HOTFIXD_ALLOW_DEV_INSTALL") == "" {
 		return errors.New("this is an unlicensed development build; install an official release from hotfix.buildcraft.town/server.html")
 	}
 	if handled, err := packagedServiceCommand(cmd); handled {

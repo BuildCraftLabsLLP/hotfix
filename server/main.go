@@ -25,6 +25,15 @@ Service:
   start | stop | restart
   status               Show what the service is doing
 
+License:
+  license status       Show the license (trial days left, or licensed)
+  license activate <key>
+                       Use a seat of your license (HFXS-… key) on this server
+  license deactivate   Free this server's seat
+  license refresh      Check the license with the server now
+  license reset-identity
+                       Give a cloned machine its own identity
+
 Settings:
   config show          Print the settings
   config set <key> <value>
@@ -68,8 +77,14 @@ func runCLI(args []string, stdout, stderr io.Writer) error {
 		fmt.Fprint(stdout, usage)
 		return nil
 	case "version", "--version", "-v":
-		fmt.Fprintln(stdout, "hotfixd", version)
+		if licenseEnforced() {
+			fmt.Fprintln(stdout, "hotfixd", version)
+		} else {
+			fmt.Fprintln(stdout, "hotfixd", version, "(unlicensed development build)")
+		}
 		return nil
+	case "license":
+		return licenseCommand(rest, stdout)
 	case "run":
 		return runForeground()
 	case "check":
@@ -178,6 +193,10 @@ func printStatus(w io.Writer) error {
 	fmt.Fprintf(w, "Version:   %s (PID %d, up since %s)\n", st.Version, st.PID, st.Started.Format(time.RFC1123))
 	fmt.Fprintf(w, "Mode:      %s: over %.0f%% of one core for %.0fs is %s\n", st.Mode, st.CPUThreshold, st.KillDuration,
 		map[bool]string{true: "killed", false: "reported only"}[st.Mode == ModeEnforce])
+	if st.ConfiguredMode == ModeEnforce && st.Mode != ModeEnforce {
+		fmt.Fprintln(w, "           (set to enforce, but not licensed: only reporting)")
+	}
+	fmt.Fprintf(w, "License:   %s\n", describeSummary(st.License))
 	fmt.Fprintf(w, "Updated:   %s ago, %d processes measured\n", age, st.Processes)
 	if age > 30*time.Second {
 		fmt.Fprintln(w, "           (stale: is the service running?)")

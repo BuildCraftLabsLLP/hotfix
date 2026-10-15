@@ -16,6 +16,7 @@ type engine struct {
 	cfg     *configStore
 	mon     *Monitor
 	smp     *sampler
+	lic     *licenseManager
 	started time.Time
 	warning string
 
@@ -40,6 +41,7 @@ func newEngine(configFile string) (*engine, error) {
 		done:    make(chan struct{}),
 	}
 	e.mon.onEvent = func(ev Event) { sendWebhook(e.cfg.Get(), ev) }
+	e.lic = newLicenseManager(e.cfg.Get)
 
 	switch {
 	case selfInContainer():
@@ -59,6 +61,8 @@ func (e *engine) Run() {
 	if e.warning != "" {
 		logf("warning: %s", e.warning)
 	}
+
+	go e.lic.Run(e.stop)
 
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
@@ -102,7 +106,7 @@ func (e *engine) tick(forceReload bool) {
 			e.mon.Reset()
 		}
 	}
-	cfg := e.cfg.Get()
+	cfg := e.effectiveConfig()
 
 	procs, err := e.smp.Sample()
 	if err != nil {
@@ -113,12 +117,25 @@ func (e *engine) tick(forceReload bool) {
 	e.writeStatus(cfg, len(procs))
 }
 
+// effectiveConfig is the config as applied: enforce mode needs a license (or
+// trial); without one hotfixd only reports.
+func (e *engine) effectiveConfig() Config {
+	e.lic.loadFromDisk() // pick up `hotfixd license …` changes at once
+	cfg := e.cfg.Get()
+	e.mon.monitorNote = ""
+	if cfg.Mode == ModeEnforce && !e.lic.Licensed() {
+		cfg.Mode = ModeMonitor
+		e.mon.monitorNote = "not licensed, so only reporting: " + e.lic.Summary().Note
+	}
+	return cfg
+}
+
 func (e *engine) writeStatus(cfg Config, seen int) {
 	hot, events := e.mon.Snapshot()
 	st := Status{
 		Version: version, PID: os.Getpid(), Started: e.started, Updated: time.Now(),
-		Mode: cfg.Mode, CPUThreshold: cfg.CPUThreshold, KillDuration: cfg.KillDuration,
-		Processes: seen, Events: events, Warning: e.warning,
+		Mode: cfg.Mode, ConfiguredMode: e.cfg.Get().Mode, CPUThreshold: cfg.CPUThreshold, KillDuration: cfg.KillDuration,
+		Processes: seen, Events: events, Warning: e.warning, License: e.lic.Summary(),
 	}
 	for _, h := range hot {
 		st.Hot = append(st.Hot, statusHot{PID: h.PID, Name: h.DisplayName(), CPU: h.CPU, HotFor: time.Since(h.HotSince).Seconds()})
