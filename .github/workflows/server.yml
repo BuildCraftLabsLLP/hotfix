@@ -36,7 +36,10 @@ jobs:
       - name: Vet and test
         shell: bash
         run: |
-          test -z "$(gofmt -l .)" || { gofmt -l .; echo "::error::gofmt needed"; exit 1; }
+          # (Windows checks out CRLF line endings, which gofmt would flag.)
+          if [ "$RUNNER_OS" != Windows ]; then
+            test -z "$(gofmt -l .)" || { gofmt -l .; echo "::error::gofmt needed"; exit 1; }
+          fi
           go vet ./...
           go test -count=1 -v ./...
 

@@ -17,7 +17,7 @@ var systemdUnit string
 // with the binary path filled in for wherever this hotfixd lives (tarball
 // installs put it in /usr/local/bin).
 func systemdUnitTemplate() string {
-	return strings.Replace(systemdUnit, "ExecStart=/usr/bin/hotfixd run", "ExecStart={{.Path|cmdEscape}} run", 1)
+	return strings.Replace(systemdUnit, "ExecStart=/usr/bin/hotfixd run", "ExecStart={{Path | cmdEscape}} run", 1)
 }
 
 // packagedUnit is where the .deb/.rpm installs the unit.
