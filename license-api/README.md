@@ -57,7 +57,7 @@ railway up --service license-api    # build the Dockerfile and deploy this folde
    variables are all or nothing: with **none** set, billing is off. Trials and
    `hotfixd` license calls work, the buy page says "Purchases open soon", and
    checkout/manage/recover/webhook answer 503. Setting all four turns it on.
-2. Enable backups on the Postgres database (dashboard → Postgres → Backups).
+2. Backups: see [Backups](#backups) (the `pg-backup` service and `backups` bucket in the same file).
 3. `railway domain status <id>` (or the service's **Networking** tab) shows the
    DNS records for `license.buildcraft.town`.
 
@@ -82,6 +82,39 @@ future expiry, any CVV), then switch the Razorpay variables to live keys.
 Deploys: `railway up --service license-api` from this folder. (To deploy on
 every push to `main` instead, connect the service to the GitHub repo in its
 Settings, with Root Directory `/license-api` and watch path `/license-api/**`.)
+
+## Backups
+
+Railway's own volume backups need a Pro workspace, so the project runs its own:
+the **`pg-backup`** cron service (`backup/`) runs every night at 02:30 UTC. It
+`pg_dump`s the database, checks the archive is readable, encrypts it with
+[age](https://age-encryption.org) to `BACKUP_AGE_RECIPIENT` (a **public** key),
+uploads it to the **`backups`** bucket (region `sjc`, away from the database)
+as `license-db-<UTC time>.dump.age`, and deletes dumps older than 30 days
+(`KEEP_DAYS`). A failed night shows as a failed run of `pg-backup`.
+
+The **private** age key (`AGE-SECRET-KEY-1…`) is never on Railway: keep it with
+the signing key. Without it the dumps can't be read (by anyone, us included).
+
+`pg-backup` variables: `DATABASE_URL=${{Postgres.DATABASE_URL}}`,
+`BACKUP_AGE_RECIPIENT=age1…`, and `BUCKET`, `ENDPOINT`, `ACCESS_KEY_ID`,
+`SECRET_ACCESS_KEY`, `REGION` as references to the bucket
+(`${{backups.BUCKET}}` …). Deploy it with
+`railway up backup --path-as-root --service pg-backup`; run a backup now with
+`railway cron run --service pg-backup` (or the service's "Run now").
+
+**Restore** (needs `age` and PostgreSQL 18's `pg_restore`, or the `backup/`
+Docker image, which has both):
+1. Download the dump: the bucket's Credentials tab has S3 keys for any S3 client, e.g.
+   `aws --endpoint-url https://t3.storageapi.dev s3 cp s3://<BUCKET>/license-db-….dump.age .`
+2. Get a connection URL for the database (Postgres → Variables → `DATABASE_PUBLIC_URL`).
+3. Stop `license-api` (or scale it to zero) so nothing writes during the restore.
+4. `backup/restore.sh license-db-….dump.age <age key file> "$DATABASE_PUBLIC_URL"`.
+   It replaces the tables in one transaction: if anything fails, nothing changes.
+5. Start `license-api` again.
+
+CI restores a real backup (into an empty database and over existing data)
+on every change to `license-api/`.
 
 ## Develop and test
 

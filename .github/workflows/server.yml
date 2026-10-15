@@ -74,10 +74,15 @@ jobs:
           ( yes > /dev/null & echo $! > /tmp/hog.pid )
           HOG=$(cat /tmp/hog.pid)
 
-          # Monitor mode: it must survive and be reported.
-          sleep 20
+          # Monitor mode: it must survive and be reported. (Polled: on a busy
+          # runner the hog can dip under the threshold, restarting its 5 s.)
+          for i in $(seq 1 90); do
+            sudo hotfixd status > /tmp/status.txt
+            grep -q would_kill /tmp/status.txt && break
+            sleep 1
+          done
+          cat /tmp/status.txt
           kill -0 "$HOG"
-          sudo hotfixd status | tee /tmp/status.txt
           grep -q would_kill /tmp/status.txt
 
           # Enforce: it must die.
@@ -115,9 +120,13 @@ jobs:
           & $h config set kill_duration 5
 
           $hog = Start-Process pwsh -ArgumentList '-NoProfile','-Command','while($true){}' -PassThru -WindowStyle Hidden
-          Start-Sleep 20
+          for ($i = 0; $i -lt 90; $i++) {
+            $st = & $h status | Out-String
+            if ($st -match 'would_kill') { break }
+            Start-Sleep 1
+          }
+          $st
           if ($hog.HasExited) { throw "the hog was killed in monitor mode" }
-          & $h status | Tee-Object -Variable st
           if (-not ($st -match 'would_kill')) { throw "no would_kill reported" }
 
           & $h config set mode enforce
@@ -286,9 +295,13 @@ jobs:
 
           # The trial is over (TRIAL_DAYS=0) and there's no seat: enforce must
           # only report.
-          sleep 25
+          for i in $(seq 1 90); do
+            sudo hotfixd status > /tmp/st.txt
+            grep -q would_kill /tmp/st.txt && break
+            sleep 1
+          done
+          cat /tmp/st.txt
           kill -0 "$HOG"
-          sudo hotfixd status | tee /tmp/st.txt
           grep -q "but not licensed" /tmp/st.txt
           grep -q "NOT licensed: the 14-day trial has ended" /tmp/st.txt
           grep -q would_kill /tmp/st.txt
