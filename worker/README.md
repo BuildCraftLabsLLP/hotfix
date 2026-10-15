@@ -9,6 +9,8 @@ Endpoints:
 
 - `GET /dl/mac` → 302 to the latest `*-macOS.dmg`
 - `GET /dl/win` → 302 to the latest `Hotfix-Setup-*-Windows.exe`
+- `GET /dl/linux` → 302 to the latest `*-Linux-x86_64.deb` (Ubuntu/Debian installer)
+- `GET /dl/linux-rpm` → `*-Linux-x86_64.rpm` (Fedora/openSUSE); `/dl/linux-tar` → `*-Linux-x86_64.tar.gz` (any distro); `/dl/linux-arm64` → `*-Linux-arm64.tar.gz`
 - `GET /dl/stats?key=<STATS_TOKEN>` → JSON of all counters
 
 ## Deploy

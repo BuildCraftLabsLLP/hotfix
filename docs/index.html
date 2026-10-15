@@ -146,7 +146,7 @@
     .download-section .section-label { color: rgba(201,70,30,0.8); }
     .download-section .section-title { color: #fff; }
     .download-section .section-sub { color: rgba(255,255,255,0.5); margin: 0 auto 48px; }
-    .platform-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; max-width: 600px; margin: 0 auto; }
+    .platform-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; max-width: 900px; margin: 0 auto; }
     .platform-card {
       background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.10);
       border-radius: 14px; padding: 28px; text-align: left;
@@ -162,7 +162,7 @@
     }
     .btn-dl:hover { opacity: 0.88; }
     .download-note { margin-top: 20px; font-size: 12px; color: rgba(255,255,255,0.30); max-width: 480px; margin-left: auto; margin-right: auto; }
-    @media(max-width:520px){ .platform-cards { grid-template-columns: 1fr; } }
+    @media(max-width:760px){ .platform-cards { grid-template-columns: 1fr; max-width: 420px; } }
 
     /* ── Stats ── */
     .stats-section { text-align: center; }
@@ -214,10 +214,10 @@
         "applicationSubCategory": "System Monitor",
         "operatingSystem": "macOS 13+, Windows 11",
         "url": "https://hotfix.buildcraft.town/",
-        "downloadUrl": "https://github.com/buildcraftlabs/hotfix/releases/latest",
-        "softwareHelp": "https://github.com/buildcraftlabs/hotfix",
+        "downloadUrl": "https://github.com/BuildCraftLabsLLP/hotfix/releases/latest",
+        "softwareHelp": "https://github.com/BuildCraftLabsLLP/hotfix",
         "image": "https://hotfix.buildcraft.town/og-image.png",
-        "description": "Hotfix is a free, native system-tray app for macOS and Windows that monitors CPU usage and automatically terminates runaway processes before your fan spins up, your machine overheats, or your battery drains.",
+        "description": "Hotfix is a native system-tray app for macOS, Windows and Linux that monitors CPU usage and automatically terminates runaway processes before your fan spins up, your machine overheats, or your battery drains.",
         "isAccessibleForFree": true,
         "featureList": [
           "Monitors CPU usage of every process every 5 seconds",
@@ -241,7 +241,7 @@
         "@id": "https://buildcraft.town/#organization",
         "name": "BuildCraft Labs",
         "url": "https://buildcraft.town",
-        "sameAs": [ "https://github.com/buildcraftlabs" ]
+        "sameAs": [ "https://github.com/BuildCraftLabsLLP" ]
       },
       {
         "@type": "WebSite",
@@ -257,7 +257,7 @@
             "name": "What is Hotfix?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "Hotfix is a free, native system-tray app for macOS and Windows that monitors CPU usage and automatically terminates runaway processes before your fan spins up, your machine overheats, or your battery drains."
+              "text": "Hotfix is a native system-tray app for macOS, Windows and Linux that monitors CPU usage and automatically terminates runaway processes before your fan spins up, your machine overheats, or your battery drains."
             }
           },
           {
@@ -265,7 +265,7 @@
             "name": "Is Hotfix free?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "Yes. Hotfix is completely free and open source. There is no subscription, no account, and no telemetry."
+              "text": "Yes. Hotfix is completely free and open source on macOS, Windows and Linux. There is no subscription, no account, and no telemetry."
             }
           },
           {
@@ -273,7 +273,7 @@
             "name": "Which operating systems does Hotfix support?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "Hotfix runs on macOS 13 Ventura or later (Apple Silicon and Intel) and on Windows 11 (64-bit)."
+              "text": "Hotfix runs on macOS 13 Ventura or later (Apple Silicon and Intel), on Windows 11 (64-bit), and on 64-bit Linux (Intel/AMD or ARM) with a 2022-or-newer distribution such as Ubuntu 22.04, Debian 12, Fedora or Linux Mint, on a desktop with a system tray."
             }
           },
           {
@@ -315,7 +315,7 @@
     <span>Hotfix</span>
     <span class="nav-badge">FREE</span>
   </div>
-  <a class="nav-cta" href="https://github.com/buildcraftlabs/hotfix/releases/latest">Download</a>
+  <a class="nav-cta" href="https://github.com/BuildCraftLabsLLP/hotfix/releases/latest">Download</a>
 </nav>
 
 <!-- Hero -->
@@ -332,8 +332,12 @@
       <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M3 5.557L10.333 4.5v7.167H3V5.557zm0 12.886L10.333 19.5v-7.167H3v5.11zm8-13.109L21 3.667v8.167H11V5.334zm0 13.11L21 20.333v-8.167H11v6.277z"/></svg>
       Download for Windows
     </a>
+    <a class="btn-secondary" href="https://hotfix.buildcraft.town/dl/linux">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd"><path d="M4 4h16a2 2 0 012 2v12a2 2 0 01-2 2H4a2 2 0 01-2-2V6a2 2 0 012-2zm2.3 4.3L9 11l-2.7 2.7 1.4 1.4L11.8 11 7.7 6.9 6.3 8.3zM12 14v2h6v-2h-6z"/></svg>
+      Download for Linux
+    </a>
   </div>
-  <p class="hero-meta">macOS 13+ · Windows 11 · Free · Open Source</p>
+  <p class="hero-meta">macOS 13+ · Windows 11 · Linux · Free on macOS &amp; Windows · Open Source</p>
 </section>
 
 <!-- Problem -->
@@ -468,15 +472,15 @@
     <div class="faq">
       <details class="faq-item" open>
         <summary>What is Hotfix?</summary>
-        <p>Hotfix is a free, native system-tray app for macOS and Windows that monitors CPU usage and automatically terminates runaway processes before your fan spins up, your machine overheats, or your battery drains.</p>
+        <p>Hotfix is a native system-tray app for macOS, Windows and Linux that monitors CPU usage and automatically terminates runaway processes before your fan spins up, your machine overheats, or your battery drains.</p>
       </details>
       <details class="faq-item">
         <summary>Is Hotfix free?</summary>
-        <p>Yes. Hotfix is completely free and open source. There is no subscription, no account, and no telemetry.</p>
+        <p>Yes. Hotfix is completely free and open source on macOS, Windows and Linux. There is no subscription, no account, and no telemetry.</p>
       </details>
       <details class="faq-item">
         <summary>Which operating systems does Hotfix support?</summary>
-        <p>Hotfix runs on macOS 13 Ventura or later (Apple Silicon and Intel) and on Windows 11 (64-bit).</p>
+        <p>Hotfix runs on macOS 13 Ventura or later (Apple Silicon and Intel), on Windows 11 (64-bit), and on 64-bit Linux (Intel/AMD or ARM) with a 2022-or-newer distribution such as Ubuntu 22.04, Debian 12, Fedora or Linux Mint, on a desktop with a system tray.</p>
       </details>
       <details class="faq-item">
         <summary>How does Hotfix decide which processes to kill?</summary>
@@ -499,7 +503,7 @@
   <div class="container fade">
     <p class="section-label">Download</p>
     <h2 class="section-title">Free for macOS and Windows.</h2>
-    <p class="section-sub">Native app for both platforms. No subscription, no account, no telemetry.</p>
+    <p class="section-sub">Native app for every platform. No account, no subscription, no telemetry.</p>
     <div class="platform-cards">
       <div class="platform-card">
         <div class="plat-icon">🍎</div>
@@ -517,8 +521,16 @@
           Download .exe
         </a>
       </div>
+      <div class="platform-card">
+        <div class="plat-icon">🐧</div>
+        <h3>Linux</h3>
+        <p class="plat-req">Ubuntu, Debian &amp; Mint · x86-64 · Free</p>
+        <a class="btn-dl" href="https://hotfix.buildcraft.town/dl/linux">
+          Download .deb
+        </a>
+      </div>
     </div>
-    <p class="download-note">macOS: right-click → Open on first launch (not yet notarized). Windows: a per-user installer — no admin needed; the app self-updates silently after that.</p>
+    <p class="download-note">macOS: right-click → Open on first launch (not yet notarized). Windows: a per-user installer — no admin needed; the app self-updates silently after that. Linux: double-click the .deb to install. Also available: an <a href="https://hotfix.buildcraft.town/dl/linux-rpm" style="text-decoration:underline;">.rpm</a> for Fedora &amp; openSUSE, a <a href="https://hotfix.buildcraft.town/dl/linux-tar" style="text-decoration:underline;">.tar.gz</a> for any distro (per-user <code>./install.sh</code>, no root), and an <a href="https://hotfix.buildcraft.town/dl/linux-arm64" style="text-decoration:underline;">ARM64 build</a>.</p>
   </div>
 </section>
 
@@ -554,11 +566,11 @@
   <div class="footer-right">
     <div>© 2026 BuildCraft Labs</div>
     <div style="margin-top:4px;">
-      <a href="https://github.com/buildcraftlabs/hotfix">GitHub</a>
+      <a href="https://github.com/BuildCraftLabsLLP/hotfix">GitHub</a>
       &nbsp;·&nbsp;
-      <a href="https://github.com/buildcraftlabs/hotfix/releases">Releases</a>
+      <a href="https://github.com/BuildCraftLabsLLP/hotfix/releases">Releases</a>
       &nbsp;·&nbsp;
-      <a href="https://github.com/buildcraftlabs/hotfix/issues/new">Report a Bug</a>
+      <a href="https://github.com/BuildCraftLabsLLP/hotfix/issues/new">Report a Bug</a>
     </div>
   </div>
 </footer>
@@ -572,7 +584,7 @@
   // Live download counts from GitHub Releases (falls back to baked-in numbers on error / rate-limit)
   (async function () {
     try {
-      const res = await fetch('https://api.github.com/repos/buildcraftlabs/hotfix/releases?per_page=100', {
+      const res = await fetch('https://api.github.com/repos/BuildCraftLabsLLP/hotfix/releases?per_page=100', {
         headers: { 'Accept': 'application/vnd.github+json' }
       });
       if (!res.ok) return;
