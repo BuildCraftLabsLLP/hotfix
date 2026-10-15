@@ -1,0 +1,1353 @@
+<!DOCTYPE html>
+<!-- Linux copy of windows/assets/settings.html, shown by linux/settings_window.go.
+     Keep the two in sync; the only differences are the platform wording and the
+     {{VERSION}} placeholder, which is filled in from currentVersion at runtime. -->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Hotfix Settings</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    /* ── BuildCraft Design System ── */
+    :root {
+      --bg:       #F6F4F0;
+      --text:     #141416;
+      --accent:   #C9461E;
+      --accent-hover: #A8391A;
+      --accent-light: rgba(201, 70, 30, 0.10);
+      --surface:  #EDEAE5;
+      --surface-2:#E4E1DB;
+      --border:   rgba(20, 20, 22, 0.10);
+      --border-focus: rgba(201, 70, 30, 0.40);
+      --muted:    #6B6968;
+      --danger:   #DC2626;
+      --success:  #16A34A;
+      --radius:   14px;
+      --radius-sm: 8px;
+      --shadow-card: 0 1px 3px rgba(20,20,22,0.06), 0 4px 16px rgba(20,20,22,0.04);
+      --shadow-btn:  0 1px 3px rgba(201,70,30,0.30), 0 2px 8px rgba(201,70,30,0.16);
+      --transition: 160ms ease;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html { font-size: 15px; }
+
+    body {
+      font-family: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding-bottom: 100px; /* room for sticky save bar */
+    }
+
+    /* ── Header ── */
+    .header {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      background: rgba(246,244,240,0.85);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+    }
+
+    .header-inner {
+      max-width: 640px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      height: 64px;
+    }
+
+    .header-icon {
+      font-size: 26px;
+      line-height: 1;
+      flex-shrink: 0;
+    }
+
+    .header-title {
+      flex: 1;
+    }
+
+    .header-title h1 {
+      font-size: 1.15rem;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+      color: var(--text);
+    }
+
+    .header-title p {
+      font-size: 0.75rem;
+      font-weight: 500;
+      color: var(--muted);
+      letter-spacing: 0.01em;
+    }
+
+    .header-badge {
+      background: var(--accent-light);
+      color: var(--accent);
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      padding: 3px 8px;
+      border-radius: 20px;
+    }
+
+    /* ── Main content ── */
+    .content {
+      max-width: 640px;
+      margin: 0 auto;
+      padding: 28px 24px 0;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    /* ── Card ── */
+    .card {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-card);
+      overflow: hidden;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 18px 20px 14px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .card-header-icon {
+      width: 32px;
+      height: 32px;
+      background: var(--surface);
+      border-radius: var(--radius-sm);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 15px;
+      flex-shrink: 0;
+    }
+
+    .card-header h2 {
+      font-size: 0.9rem;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+    }
+
+    .card-header p {
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin-top: 1px;
+      font-weight: 500;
+    }
+
+    .card-body {
+      padding: 4px 0;
+    }
+
+    /* ── Row ── */
+    .row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--border);
+      transition: background var(--transition);
+    }
+
+    .row:last-child { border-bottom: none; }
+    .row:hover { background: var(--surface); }
+
+    .row-label {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .row-label span {
+      display: block;
+      font-size: 0.875rem;
+      font-weight: 600;
+    }
+
+    .row-label small {
+      display: block;
+      font-size: 0.72rem;
+      color: var(--muted);
+      margin-top: 2px;
+      font-weight: 500;
+    }
+
+    .row-control {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+
+    /* ── Toggle switch ── */
+    .toggle {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .toggle input[type="checkbox"] {
+      position: absolute;
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .toggle-track {
+      width: 44px;
+      height: 26px;
+      background: var(--surface-2);
+      border-radius: 13px;
+      border: 1.5px solid var(--border);
+      transition: background var(--transition), border-color var(--transition);
+      position: relative;
+    }
+
+    .toggle-thumb {
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 18px;
+      height: 18px;
+      background: #fff;
+      border-radius: 50%;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+      transition: transform var(--transition);
+    }
+
+    .toggle input:checked ~ .toggle-track {
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+
+    .toggle input:checked ~ .toggle-track .toggle-thumb {
+      transform: translateX(18px);
+    }
+
+    .toggle input:focus-visible ~ .toggle-track {
+      outline: 2px solid var(--border-focus);
+      outline-offset: 2px;
+    }
+
+    /* ── Slider ── */
+    .slider-wrap {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .slider-val {
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: var(--accent);
+      min-width: 50px;
+      text-align: right;
+    }
+
+    input[type="range"] {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 140px;
+      height: 4px;
+      border-radius: 2px;
+      background: var(--surface-2);
+      outline: none;
+      cursor: pointer;
+    }
+
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 1px 4px rgba(201,70,30,0.4);
+      cursor: pointer;
+      transition: box-shadow var(--transition), transform var(--transition);
+    }
+
+    input[type="range"]::-webkit-slider-thumb:hover {
+      transform: scale(1.15);
+      box-shadow: 0 2px 8px rgba(201,70,30,0.5);
+    }
+
+    input[type="range"]::-moz-range-thumb {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: var(--accent);
+      border: none;
+      cursor: pointer;
+      box-shadow: 0 1px 4px rgba(201,70,30,0.4);
+    }
+
+    /* Dynamic fill for range track */
+    input[type="range"] {
+      --pct: 50%;
+      background: linear-gradient(
+        to right,
+        var(--accent) 0%,
+        var(--accent) var(--pct),
+        var(--surface-2) var(--pct),
+        var(--surface-2) 100%
+      );
+    }
+
+    /* ── Whitelist section ── */
+    .wl-list {
+      padding: 10px 20px 4px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .wl-empty {
+      font-size: 0.8rem;
+      color: var(--muted);
+      font-style: italic;
+      padding: 6px 0;
+      font-weight: 500;
+    }
+
+    .wl-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 6px 10px 6px 12px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      font-family: 'Courier New', Courier, monospace;
+      transition: background var(--transition), border-color var(--transition);
+    }
+
+    .wl-item:hover {
+      background: var(--surface-2);
+      border-color: rgba(20,20,22,0.15);
+    }
+
+    .wl-remove {
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--muted);
+      font-size: 1rem;
+      line-height: 1;
+      padding: 2px 4px;
+      border-radius: 4px;
+      transition: color var(--transition), background var(--transition);
+      display: flex;
+      align-items: center;
+    }
+
+    .wl-remove:hover {
+      color: var(--danger);
+      background: rgba(220,38,38,0.08);
+    }
+
+    .wl-add-row {
+      display: flex;
+      gap: 8px;
+      padding: 12px 20px 16px;
+      border-top: 1px solid var(--border);
+    }
+
+    .wl-input {
+      flex: 1;
+      height: 36px;
+      background: var(--bg);
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 0 12px;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text);
+      outline: none;
+      transition: border-color var(--transition), box-shadow var(--transition);
+    }
+
+    .wl-input::placeholder {
+      color: var(--muted);
+      font-weight: 400;
+    }
+
+    .wl-input:focus {
+      border-color: var(--border-focus);
+      box-shadow: 0 0 0 3px rgba(201,70,30,0.10);
+    }
+
+    .btn-add {
+      height: 36px;
+      padding: 0 16px;
+      background: var(--surface);
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius-sm);
+      font-family: 'Manrope', sans-serif;
+      font-size: 0.82rem;
+      font-weight: 700;
+      color: var(--text);
+      cursor: pointer;
+      transition: background var(--transition), border-color var(--transition);
+      white-space: nowrap;
+    }
+
+    .btn-add:hover {
+      background: var(--surface-2);
+      border-color: rgba(20,20,22,0.20);
+    }
+
+    .btn-add:active {
+      transform: scale(0.97);
+    }
+
+    /* ── Running-apps dropdown (Exclusions) ── */
+    #exclusions-card {
+      overflow: visible; /* let the dropdown hang below the card */
+    }
+
+    .wl-combo {
+      position: relative;
+      flex: 1;
+      display: flex;
+    }
+
+    .wl-combo .wl-input {
+      padding-right: 40px;
+    }
+
+    .wl-toggle {
+      position: absolute;
+      top: 3px;
+      right: 3px;
+      width: 30px;
+      height: 30px;
+      border: none;
+      border-radius: 6px;
+      background: none;
+      color: var(--muted);
+      font-size: 0.7rem;
+      cursor: pointer;
+      transition: background var(--transition), color var(--transition), transform var(--transition);
+    }
+
+    .wl-toggle:hover {
+      background: var(--surface);
+      color: var(--text);
+    }
+
+    .wl-combo.open .wl-toggle {
+      color: var(--accent);
+      transform: rotate(180deg);
+    }
+
+    .wl-menu {
+      position: absolute;
+      top: calc(100% + 6px);
+      left: 0;
+      right: 0;
+      z-index: 30;
+      max-height: 260px;
+      overflow-y: auto;
+      padding: 4px;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      box-shadow: 0 8px 24px rgba(20,20,22,0.12);
+      scroll-margin-bottom: 84px; /* keep it clear of the fixed save bar */
+    }
+
+    .wl-menu[hidden] {
+      display: none;
+    }
+
+    .wl-menu-head {
+      padding: 6px 10px 4px;
+      font-size: 0.68rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .wl-option {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      width: 100%;
+      padding: 7px 10px;
+      border: none;
+      border-radius: 6px;
+      background: none;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text);
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .wl-option:hover,
+    .wl-option.active {
+      background: var(--surface);
+    }
+
+    .wl-option-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .wl-option-text {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .wl-option-label {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-family: 'Manrope', sans-serif;
+      font-weight: 600;
+    }
+
+    .wl-option-exe {
+      flex-shrink: 0;
+      font-size: 0.74rem;
+      color: var(--muted);
+    }
+
+    .wl-option-meta {
+      flex-shrink: 0;
+      font-family: 'Manrope', sans-serif;
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: var(--muted);
+    }
+
+    .wl-option.hot .wl-option-meta {
+      color: var(--accent);
+    }
+
+    .wl-option.added {
+      cursor: default;
+      opacity: 0.5;
+    }
+
+    .wl-option.added:hover {
+      background: none;
+    }
+
+    .wl-menu-note {
+      padding: 10px;
+      font-size: 0.78rem;
+      font-style: italic;
+      color: var(--muted);
+    }
+
+    /* ── About section ── */
+    .about-body {
+      padding: 16px 20px;
+    }
+
+    .about-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 8px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.85rem;
+    }
+
+    .about-item:last-child { border-bottom: none; }
+
+    .about-item-label {
+      color: var(--muted);
+      font-weight: 500;
+    }
+
+    .about-item-value {
+      font-weight: 700;
+      text-align: right;
+    }
+
+    .about-link {
+      color: var(--accent);
+      text-decoration: none;
+      font-weight: 700;
+      cursor: pointer;
+      transition: opacity var(--transition);
+    }
+
+    .about-link:hover { opacity: 0.75; }
+
+    .about-built {
+      margin-top: 16px;
+      text-align: center;
+      font-size: 0.75rem;
+      color: var(--muted);
+      font-weight: 500;
+    }
+
+    .about-built strong {
+      color: var(--text);
+    }
+
+    /* ── Logs viewer ── */
+    .log-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 12px 20px 8px;
+    }
+
+    .log-view {
+      margin: 0 20px 16px;
+      height: 200px;
+      overflow: auto;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 12px;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 0.72rem;
+      line-height: 1.5;
+      color: var(--text);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* ── Status bar / Save button ── */
+    .save-bar {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: rgba(246,244,240,0.90);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-top: 1px solid var(--border);
+      padding: 14px 24px;
+      z-index: 100;
+    }
+
+    .save-bar-inner {
+      max-width: 640px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .save-status {
+      flex: 1;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--muted);
+      transition: color 0.3s;
+    }
+
+    .save-status.success { color: var(--success); }
+    .save-status.error   { color: var(--danger); }
+
+    .btn-save {
+      height: 42px;
+      padding: 0 28px;
+      background: var(--accent);
+      border: none;
+      border-radius: 10px;
+      font-family: 'Manrope', sans-serif;
+      font-size: 0.88rem;
+      font-weight: 800;
+      color: #fff;
+      cursor: pointer;
+      box-shadow: var(--shadow-btn);
+      transition: background var(--transition), transform var(--transition), box-shadow var(--transition);
+      letter-spacing: -0.01em;
+      white-space: nowrap;
+    }
+
+    .btn-save:hover {
+      background: var(--accent-hover);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(201,70,30,0.35);
+    }
+
+    .btn-save:active {
+      transform: translateY(0);
+      box-shadow: var(--shadow-btn);
+    }
+
+    .btn-save:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    /* ── Responsive ── */
+    @media (max-width: 500px) {
+      .content { padding: 20px 16px 0; }
+      .header { padding: 0 16px; }
+      .save-bar { padding: 12px 16px; }
+      input[type="range"] { width: 110px; }
+      .row { flex-direction: column; align-items: flex-start; gap: 10px; }
+      .row-control { width: 100%; justify-content: flex-start; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Header ── -->
+<header class="header">
+  <div class="header-inner">
+    <span class="header-icon">🔥</span>
+    <div class="header-title">
+      <h1>Hotfix Settings</h1>
+      <p>by BuildCraft Labs</p>
+    </div>
+    <span class="header-badge">Linux</span>
+  </div>
+</header>
+
+<!-- ── Main ── -->
+<main class="content">
+
+  <!-- Protection card -->
+  <div class="card" id="protection-card">
+    <div class="card-header">
+      <div class="card-header-icon">🛡️</div>
+      <div>
+        <h2>Protection</h2>
+        <p>Control when and how processes are terminated</p>
+      </div>
+    </div>
+    <div class="card-body">
+
+      <!-- Enable toggle -->
+      <div class="row">
+        <div class="row-label">
+          <span>Enable Monitoring</span>
+          <small>Hotfix will watch for CPU hogs in the background</small>
+        </div>
+        <div class="row-control">
+          <label class="toggle" aria-label="Enable monitoring">
+            <input type="checkbox" id="enabled" />
+            <div class="toggle-track"><div class="toggle-thumb"></div></div>
+          </label>
+        </div>
+      </div>
+
+      <!-- Run at startup -->
+      <div class="row">
+        <div class="row-label">
+          <span>Run at Startup</span>
+          <small>Start Hotfix automatically when you log in</small>
+        </div>
+        <div class="row-control">
+          <label class="toggle" aria-label="Run at startup">
+            <input type="checkbox" id="launch-at-login" />
+            <div class="toggle-track"><div class="toggle-thumb"></div></div>
+          </label>
+        </div>
+      </div>
+
+      <!-- CPU threshold -->
+      <div class="row">
+        <div class="row-label">
+          <span>CPU Threshold</span>
+          <small>Kill any process sustained above this CPU level</small>
+        </div>
+        <div class="row-control slider-wrap">
+          <input type="range" id="cpu-threshold"
+            min="50" max="95" step="5"
+            aria-label="CPU threshold percent" />
+          <span class="slider-val" id="cpu-threshold-val">80%</span>
+        </div>
+      </div>
+
+      <!-- Kill after -->
+      <div class="row">
+        <div class="row-label">
+          <span>Kill After</span>
+          <small>How long a process must stay above threshold before being killed</small>
+        </div>
+        <div class="row-control slider-wrap">
+          <input type="range" id="kill-duration"
+            min="30" max="300" step="15"
+            aria-label="Kill duration in seconds" />
+          <span class="slider-val" id="kill-duration-val">60s</span>
+        </div>
+      </div>
+
+      <!-- Kill on sleep -->
+      <div class="row">
+        <div class="row-label">
+          <span>Kill on Sleep</span>
+          <small>Terminate all hot processes when the system sleeps</small>
+        </div>
+        <div class="row-control">
+          <label class="toggle" aria-label="Kill on sleep">
+            <input type="checkbox" id="kill-on-sleep" />
+            <div class="toggle-track"><div class="toggle-thumb"></div></div>
+          </label>
+        </div>
+      </div>
+
+      <!-- Protect active app -->
+      <div class="row">
+        <div class="row-label">
+          <span>Protect Active App</span>
+          <small>Never kill the app you're currently using (the foreground window)</small>
+        </div>
+        <div class="row-control">
+          <label class="toggle" aria-label="Protect active app">
+            <input type="checkbox" id="protect-active-app" />
+            <div class="toggle-track"><div class="toggle-thumb"></div></div>
+          </label>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Exclusions card -->
+  <div class="card" id="exclusions-card">
+    <div class="card-header">
+      <div class="card-header-icon">🚫</div>
+      <div>
+        <h2>Exclusions</h2>
+        <p>Processes Hotfix will never touch</p>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="wl-list" id="whitelist-list">
+        <!-- populated by JS -->
+      </div>
+      <div class="wl-add-row">
+        <div class="wl-combo" id="wl-combo">
+          <input type="text" class="wl-input" id="wl-input"
+            placeholder="Type a name or pick an app" maxlength="100"
+            autocomplete="off" spellcheck="false" role="combobox"
+            aria-autocomplete="list" aria-expanded="false" aria-controls="wl-menu" />
+          <button class="wl-toggle" id="wl-toggle" type="button" tabindex="-1"
+            aria-label="Show apps">▼</button>
+          <div class="wl-menu" id="wl-menu" role="listbox" hidden></div>
+        </div>
+        <button class="btn-add" id="wl-add-btn">Add</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Logs card -->
+  <div class="card" id="logs-card">
+    <div class="card-header">
+      <div class="card-header-icon">📋</div>
+      <div>
+        <h2>Logs</h2>
+        <p>Recent activity and process terminations</p>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="log-toolbar">
+        <button class="btn-add" id="log-refresh-btn" type="button">Refresh</button>
+        <a class="about-link" id="log-open-link" href="#">Open log file</a>
+      </div>
+      <pre class="log-view" id="log-view">Loading…</pre>
+    </div>
+  </div>
+
+  <!-- About card -->
+  <div class="card" id="about-card">
+    <div class="card-header">
+      <div class="card-header-icon">ℹ️</div>
+      <div>
+        <h2>About</h2>
+        <p>Version and release information</p>
+      </div>
+    </div>
+    <div class="about-body">
+      <div class="about-item">
+        <span class="about-item-label">Version</span>
+        <span class="about-item-value">{{VERSION}}</span>
+      </div>
+      <div class="about-item">
+        <span class="about-item-label">Platform</span>
+        <span class="about-item-value">Linux</span>
+      </div>
+      <div class="about-item">
+        <span class="about-item-label">Updates</span>
+        <span class="about-item-value">
+          <a class="about-link" id="check-updates-link" href="#">Check for Updates</a>
+        </span>
+      </div>
+      <div class="about-built">
+        Built with ❤️ by <strong>BuildCraft Labs</strong>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<!-- ── Save bar ── -->
+<div class="save-bar">
+  <div class="save-bar-inner">
+    <span class="save-status" id="save-status">Unsaved changes will be lost on quit.</span>
+    <button class="btn-save" id="save-btn">Save Settings</button>
+  </div>
+</div>
+
+<script>
+  // ── State ──
+  let config = {
+    enabled: true,
+    cpu_threshold: 80,
+    kill_duration: 60,
+    kill_on_sleep: true,
+    protect_active_app: true,
+    launch_at_login: false,
+    whitelist: []
+  };
+
+  // ── DOM refs ──
+  const $enabled        = document.getElementById('enabled');
+  const $cpuSlider      = document.getElementById('cpu-threshold');
+  const $cpuVal         = document.getElementById('cpu-threshold-val');
+  const $killSlider     = document.getElementById('kill-duration');
+  const $killVal        = document.getElementById('kill-duration-val');
+  const $killOnSleep    = document.getElementById('kill-on-sleep');
+  const $protectActive  = document.getElementById('protect-active-app');
+  const $launchAtLogin  = document.getElementById('launch-at-login');
+  const $wlList         = document.getElementById('whitelist-list');
+  const $wlInput        = document.getElementById('wl-input');
+  const $wlAddBtn       = document.getElementById('wl-add-btn');
+  const $saveBtn        = document.getElementById('save-btn');
+  const $saveStatus     = document.getElementById('save-status');
+  const $checkUpdates   = document.getElementById('check-updates-link');
+
+  // ── Format helpers ──
+  function formatDuration(s) {
+    s = parseInt(s, 10);
+    if (s < 60) return s + 's';
+    const m = Math.floor(s / 60);
+    const r = s % 60;
+    return r === 0 ? m + 'm' : m + 'm ' + r + 's';
+  }
+
+  function sliderPct(el) {
+    const min = parseFloat(el.min);
+    const max = parseFloat(el.max);
+    const val = parseFloat(el.value);
+    return ((val - min) / (max - min)) * 100;
+  }
+
+  function updateSliderFill(el) {
+    el.style.setProperty('--pct', sliderPct(el).toFixed(1) + '%');
+  }
+
+  // ── Populate UI from config ──
+  function applyConfig(cfg) {
+    config = cfg;
+
+    $enabled.checked    = !!cfg.enabled;
+    $killOnSleep.checked = !!cfg.kill_on_sleep;
+    // Absent field (legacy config) defaults to ON, matching the Go migration.
+    $protectActive.checked = cfg.protect_active_app !== false;
+    $launchAtLogin.checked = !!cfg.launch_at_login;
+
+    $cpuSlider.value = cfg.cpu_threshold;
+    $cpuVal.textContent = Math.round(cfg.cpu_threshold) + '%';
+    updateSliderFill($cpuSlider);
+
+    $killSlider.value = cfg.kill_duration;
+    $killVal.textContent = formatDuration(cfg.kill_duration);
+    updateSliderFill($killSlider);
+
+    renderWhitelist(cfg.whitelist || []);
+  }
+
+  // ── Whitelist rendering ──
+  function renderWhitelist(list) {
+    config.whitelist = list.slice();
+    $wlList.innerHTML = '';
+
+    if (list.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'wl-empty';
+      empty.textContent = 'No custom exclusions — add process names below.';
+      $wlList.appendChild(empty);
+      return;
+    }
+
+    list.forEach((name) => {
+      const item = document.createElement('div');
+      item.className = 'wl-item';
+      item.innerHTML = `
+        <span>${escapeHTML(name)}</span>
+        <button class="wl-remove" aria-label="Remove ${escapeHTML(name)}" data-name="${escapeHTML(name)}">×</button>
+      `;
+      $wlList.appendChild(item);
+    });
+
+    // Delegate removal clicks
+    $wlList.querySelectorAll('.wl-remove').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const name = btn.getAttribute('data-name');
+        config.whitelist = config.whitelist.filter((n) => n !== name);
+        renderWhitelist(config.whitelist);
+        setStatus('');
+      });
+    });
+  }
+
+  function escapeHTML(str) {
+    return str
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  // ── Add whitelist entry ──
+  function addWhitelistName(raw) {
+    const name = raw.trim().replace(/\.exe$/i, '');
+    if (!name) return false;
+    if (config.whitelist.includes(name)) {
+      setStatus('Already in the list.', false);
+      return false;
+    }
+    config.whitelist = [...config.whitelist, name];
+    renderWhitelist(config.whitelist);
+    setStatus('');
+    return true;
+  }
+
+  function addWhitelistEntry() {
+    if (addWhitelistName($wlInput.value)) $wlInput.value = '';
+    closeAppMenu();
+  }
+
+  $wlAddBtn.addEventListener('click', addWhitelistEntry);
+
+  // ── Apps dropdown ──
+  // Lists the apps running right now (busiest first, with CPU use) and the
+  // other apps installed on the system, from hotfixListApps (provided by the
+  // Go host), so an exclusion can be picked instead of typed. Typing in the
+  // box filters both lists, by app name or process name.
+  const $wlCombo  = document.getElementById('wl-combo');
+  const $wlToggle = document.getElementById('wl-toggle');
+  const $wlMenu   = document.getElementById('wl-menu');
+  let knownApps    = null;  // [{name, label, cpu, running}] from the host; null until loaded
+  let appsLoadedAt = 0;
+  let appsLoading  = false;
+  let appsError    = '';
+  let menuOptions  = [];    // pickable names in display order (null = already excluded)
+  let activeOption = -1;
+
+  async function loadApps() {
+    if (appsLoading || (knownApps && Date.now() - appsLoadedAt < 5000)) return;
+    if (typeof hotfixListApps !== 'function') {
+      appsError = 'App list unavailable — type a name instead.';
+      renderAppMenu();
+      return;
+    }
+    appsLoading = true;
+    renderAppMenu();
+    try {
+      knownApps = (await hotfixListApps()) || [];
+      appsLoadedAt = Date.now();
+      appsError = '';
+    } catch (err) {
+      appsError = 'Could not list apps: ' + (err && err.message ? err.message : err);
+    } finally {
+      appsLoading = false;
+      renderAppMenu();
+    }
+  }
+
+  function isMenuOpen() { return !$wlMenu.hidden; }
+
+  function openAppMenu() {
+    if (isMenuOpen()) return;
+    $wlMenu.hidden = false;
+    $wlCombo.classList.add('open');
+    $wlInput.setAttribute('aria-expanded', 'true');
+    activeOption = -1;
+    renderAppMenu();
+    loadApps();
+  }
+
+  function closeAppMenu() {
+    if (!isMenuOpen()) return;
+    $wlMenu.hidden = true;
+    $wlCombo.classList.remove('open');
+    $wlInput.setAttribute('aria-expanded', 'false');
+    activeOption = -1;
+  }
+
+  function menuNote(text) {
+    const note = document.createElement('div');
+    note.className = 'wl-menu-note';
+    note.textContent = text;
+    $wlMenu.appendChild(note);
+  }
+
+  function renderAppMenu() {
+    if (!isMenuOpen()) return;
+    renderMenuContent();
+    // The box sits low on the page: scroll so the whole list shows above the
+    // save bar (a no-op when it already does).
+    $wlMenu.scrollIntoView({ block: 'nearest' });
+  }
+
+  function renderMenuContent() {
+    $wlMenu.innerHTML = '';
+    menuOptions = [];
+
+    if (appsError) return menuNote(appsError);
+    if (!knownApps) return menuNote('Loading apps…');
+
+    const typed = $wlInput.value.trim();
+    const filter = typed.toLowerCase().replace(/\.exe$/, '');
+    const matches = (a) => !filter ||
+      a.name.toLowerCase().includes(filter) || (a.label || '').toLowerCase().includes(filter);
+    const running = knownApps.filter((a) => a.running && matches(a));
+    const installed = knownApps.filter((a) => !a.running && matches(a));
+    if (running.length === 0 && installed.length === 0) {
+      return menuNote(filter
+        ? 'No app matches — press Enter to add “' + typed + '”.'
+        : 'No apps found.');
+    }
+
+    const group = (title, apps) => {
+      if (apps.length === 0) return;
+      const head = document.createElement('div');
+      head.className = 'wl-menu-head';
+      head.textContent = title;
+      $wlMenu.appendChild(head);
+      apps.forEach(addAppOption);
+    };
+    group('Running now', running);
+    group('Installed', installed);
+    highlightOption();
+  }
+
+  function addAppOption(app) {
+    const added = config.whitelist.some((n) => n.toLowerCase() === app.name.toLowerCase());
+    const hot = app.running && app.cpu >= parseFloat($cpuSlider.value);
+    const option = document.createElement('button');
+    option.type = 'button';
+    option.className = 'wl-option' + (added ? ' added' : '') + (hot ? ' hot' : '');
+    option.setAttribute('role', 'option');
+    option.dataset.index = String(menuOptions.length);
+    // Show the app's own name when it differs from the process name that
+    // gets excluded ("Visual Studio Code" · code); otherwise just the process.
+    const label = app.label && app.label.toLowerCase() !== app.name.toLowerCase() ? app.label : '';
+    const text = label
+      ? `<span class="wl-option-label">${escapeHTML(label)}</span><span class="wl-option-exe">${escapeHTML(app.name)}</span>`
+      : `<span class="wl-option-name">${escapeHTML(app.name)}</span>`;
+    const meta = added ? 'Excluded' : app.running ? Math.round(app.cpu) + '% CPU' : '';
+    option.innerHTML = `<span class="wl-option-text">${text}</span><span class="wl-option-meta">${meta}</span>`;
+    // mousedown, not click: keeps focus in the box so the menu doesn't blur shut.
+    option.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      if (!added) pickApp(app.name);
+    });
+    $wlMenu.appendChild(option);
+    menuOptions.push(added ? null : app.name);
+  }
+
+  function pickApp(name) {
+    addWhitelistName(name);
+    $wlInput.value = '';
+    closeAppMenu();
+  }
+
+  function highlightOption() {
+    $wlMenu.querySelectorAll('.wl-option').forEach((el) => {
+      el.classList.toggle('active', Number(el.dataset.index) === activeOption);
+    });
+    const active = $wlMenu.querySelector('.wl-option.active');
+    if (active) active.scrollIntoView({ block: 'nearest' });
+  }
+
+  function moveActive(step) {
+    if (!menuOptions.some((n) => n)) return;
+    let i = activeOption;
+    do {
+      i = (i + step + menuOptions.length) % menuOptions.length;
+    } while (!menuOptions[i]);
+    activeOption = i;
+    highlightOption();
+  }
+
+  $wlInput.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (isMenuOpen()) moveActive(1); else openAppMenu();
+    } else if (e.key === 'ArrowUp' && isMenuOpen()) {
+      e.preventDefault();
+      moveActive(-1);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (isMenuOpen() && activeOption >= 0 && menuOptions[activeOption]) {
+        pickApp(menuOptions[activeOption]);
+      } else {
+        addWhitelistEntry();
+      }
+    } else if (e.key === 'Escape' && isMenuOpen()) {
+      e.preventDefault();
+      e.stopPropagation(); // close the menu only, not the settings window
+      closeAppMenu();
+    }
+  });
+  $wlInput.addEventListener('input', () => {
+    activeOption = -1;
+    if (isMenuOpen()) renderAppMenu(); else openAppMenu();
+  });
+  $wlInput.addEventListener('click', openAppMenu);
+  $wlInput.addEventListener('blur', closeAppMenu);
+  $wlToggle.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    if (isMenuOpen()) {
+      closeAppMenu();
+    } else {
+      $wlInput.focus();
+      openAppMenu();
+    }
+  });
+
+  // ── Slider events ──
+  $cpuSlider.addEventListener('input', () => {
+    $cpuVal.textContent = Math.round($cpuSlider.value) + '%';
+    updateSliderFill($cpuSlider);
+    setStatus('');
+  });
+
+  $killSlider.addEventListener('input', () => {
+    $killVal.textContent = formatDuration($killSlider.value);
+    updateSliderFill($killSlider);
+    setStatus('');
+  });
+
+  $enabled.addEventListener('change', () => setStatus(''));
+  $killOnSleep.addEventListener('change', () => setStatus(''));
+  $protectActive.addEventListener('change', () => setStatus(''));
+  $launchAtLogin.addEventListener('change', () => setStatus(''));
+
+  // ── Status message ──
+  function setStatus(msg, isError) {
+    $saveStatus.textContent = msg || '';
+    $saveStatus.className = 'save-status' + (isError === true ? ' error' : isError === false ? '' : '');
+  }
+
+  // ── Save ──
+  $saveBtn.addEventListener('click', async () => {
+    $saveBtn.disabled = true;
+    setStatus('Saving…');
+
+    const payload = {
+      enabled:            $enabled.checked,
+      cpu_threshold:      parseFloat($cpuSlider.value),
+      kill_duration:      parseFloat($killSlider.value),
+      kill_on_sleep:      $killOnSleep.checked,
+      protect_active_app: $protectActive.checked,
+      launch_at_login:    $launchAtLogin.checked,
+      whitelist:          config.whitelist
+    };
+
+    try {
+      // hotfixSaveConfig is bound by the Go host (WebKitGTK); it validates and
+      // persists, rejecting with an error message if the values are invalid.
+      await hotfixSaveConfig(payload);
+
+      config = { ...config, ...payload };
+      setStatus('Settings saved successfully.', null);
+      $saveStatus.className = 'save-status success';
+    } catch (err) {
+      setStatus('Error: ' + (err && err.message ? err.message : err), true);
+    } finally {
+      $saveBtn.disabled = false;
+    }
+  });
+
+  // ── Check for updates ──
+  $checkUpdates.addEventListener('click', async (e) => {
+    e.preventDefault();
+    // hotfixCheckUpdates triggers the Go updater (silent background install).
+    try { await hotfixCheckUpdates(); } catch (_) {}
+    setStatus('Checking for updates…');
+    setTimeout(() => setStatus(''), 2500);
+  });
+
+  // ── Logs viewer ──
+  const $logView      = document.getElementById('log-view');
+  const $logRefreshBtn = document.getElementById('log-refresh-btn');
+
+  async function loadLogs() {
+    $logView.textContent = 'Loading…';
+    try {
+      const text = await hotfixGetLog();
+      // Show the tail (last 200 lines) so the newest entries are visible.
+      const lines = text.replace(/\r\n/g, '\n').split('\n').filter((l) => l.length > 0);
+      $logView.textContent = lines.length ? lines.slice(-200).join('\n') : 'No log entries yet.';
+      $logView.scrollTop = $logView.scrollHeight;
+    } catch (err) {
+      $logView.textContent = 'Could not load logs: ' + err.message;
+    }
+  }
+
+  $logRefreshBtn.addEventListener('click', loadLogs);
+
+  // "Open log file" opens the log in the OS default text editor (no browser).
+  document.getElementById('log-open-link').addEventListener('click', (e) => {
+    e.preventDefault();
+    try { hotfixOpenLog(); } catch (_) {}
+  });
+
+  // ── Load config on startup ──
+  async function loadConfig() {
+    try {
+      const cfg = await hotfixGetConfig();
+      applyConfig(cfg);
+      setStatus('Settings loaded.');
+      setTimeout(() => setStatus(''), 2000);
+    } catch (err) {
+      setStatus('Could not load settings: ' + err.message, true);
+      // Apply defaults so the page is still usable.
+      applyConfig(config);
+    }
+  }
+
+  loadConfig();
+  loadLogs();
+</script>
+</body>
+</html>
