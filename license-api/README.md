@@ -28,12 +28,18 @@ It prints a **public** key and a **private** key. Keep the private key safe
 (back it up): losing or rotating it stops every installed hotfixd from
 accepting tokens until it's updated.
 
-**3. Railway project:**
-1. **New Project → Deploy from GitHub repo** → `BuildCraftLabsLLP/hotfix`.
-2. In the service's **Settings**: **Root Directory** `/license-api`, and **Config file
-   path** `/license-api/railway.json` (it builds the Dockerfile and health-checks `/healthz`).
-3. **New → Database → PostgreSQL** in the same project. Enable its backups.
-4. In the service's **Variables**:
+**3. Railway project** (`hotfix-license`; already created). Its layout lives in
+`.railway/railway.ts` (Railway's infrastructure-as-code: the `license-api`
+service with its domain and `/healthz` health check, and the PostgreSQL
+database with its volume). Variables are deliberately **not** in that file.
+From this folder, after `railway login` and `railway link`:
+```bash
+npm install
+railway config plan     # what would change in Railway
+railway config apply
+railway up --service license-api    # build the Dockerfile and deploy this folder
+```
+1. In the service's **Variables**:
 
    | Variable | Value |
    |---|---|
@@ -46,9 +52,11 @@ accepting tokens until it's updated.
    | `GITHUB_TOKEN` | optional: a read-only token, for the "new version available" lookup |
    | `TRIAL_DAYS`, `TRIAL_IP_DAILY` | optional: 14 and 25 by default |
 
-   The service refuses to start if a required variable is missing (see the deploy logs).
-5. **Settings → Networking → Custom Domain** → `license.buildcraft.town`. Railway
-   shows the DNS records to add.
+   The service refuses to start if a required variable is missing (see the deploy
+   logs); setting variables in the dashboard redeploys it.
+2. Enable backups on the Postgres database (dashboard → Postgres → Backups).
+3. `railway domain status <id>` (or the service's **Networking** tab) shows the
+   DNS records for `license.buildcraft.town`.
 
 **4. DNS** (Cloudflare, where `buildcraft.town` lives): add the records Railway
 showed (a CNAME for `license`, and a TXT record if asked) as **DNS only (grey
@@ -68,8 +76,9 @@ Check it: `https://license.buildcraft.town/healthz` says `ok`, and
 test purchase with a Razorpay test card (e.g. Visa `4384 7968 2770 3274`, any
 future expiry, any CVV), then switch the Razorpay variables to live keys.
 
-Deploys: every push to `main` that changes `license-api/` redeploys
-(`watchPatterns` in `railway.json`).
+Deploys: `railway up --service license-api` from this folder. (To deploy on
+every push to `main` instead, connect the service to the GitHub repo in its
+Settings, with Root Directory `/license-api` and watch path `/license-api/**`.)
 
 ## Develop and test
 
