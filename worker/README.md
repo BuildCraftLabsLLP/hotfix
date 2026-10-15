@@ -45,47 +45,13 @@ curl "https://hotfix.buildcraft.town/dl/stats?key=YOUR_TOKEN"
 `count:mac` / `count:win` are lifetime totals; the dated keys are per-day
 buckets for trend lines.
 
-## Hotfix Server licensing (`src/server-api.js`)
+## Hotfix Server downloads
 
-A **separate Worker** (`wrangler.server.toml`, name `hotfix-server-api`) on
-`hotfix.buildcraft.town/api/server/*`, so its setup can never block a `/dl`
-deploy. It sells Hotfix Server ($1 per server per month on Razorpay
-Subscriptions, quantity = servers), issues license keys, hands out seats and
-14-day trials, and signs the tokens `hotfixd` checks (`server/license.go`).
-Details are in the header comment of `src/server-api.js`.
-
-One-time setup:
-
-1. **Razorpay** (start in Test Mode): enable Subscriptions; create a monthly
-   Plan at **$1.00** (USD needs international payments enabled); create API
-   keys. Add a webhook to `https://hotfix.buildcraft.town/api/server/webhook`
-   for the `subscription.*` events, with a secret of your choice.
-2. **Cloudflare** (from `worker/`):
-
-   ```bash
-   wrangler d1 create hotfix-server                 # paste database_id into wrangler.server.toml
-   wrangler kv namespace create HOTFIX_SERVER_KV    # paste the id into wrangler.server.toml
-   # set RAZORPAY_KEY_ID and RAZORPAY_SERVER_PLAN_ID under [vars] in wrangler.server.toml
-   wrangler d1 migrations apply hotfix-server --remote -c wrangler.server.toml
-   node scripts/gen-server-license-key.mjs          # prints a public and a private key
-   wrangler secret put SERVER_LICENSE_SIGNING_KEY -c wrangler.server.toml   # the PRIVATE key
-   wrangler secret put RAZORPAY_KEY_SECRET -c wrangler.server.toml
-   wrangler secret put RAZORPAY_WEBHOOK_SECRET -c wrangler.server.toml
-   wrangler deploy -c wrangler.server.toml
-   ```
-3. **GitHub**: repo variable `SERVER_LICENSE_PUBLIC_KEY` = the PUBLIC key.
-   CI compiles it into `hotfixd` and refuses to release without it.
-
-Back up the private key: losing or rotating it stops every installed hotfixd
-from accepting tokens until it's updated.
-
-Tests: `node --test worker/test/server-api.test.mjs` (Node 24+, real SQLite via
-`node:sqlite`). `worker/test/server-api-harness.mjs` serves the API locally
-for end-to-end runs of hotfixd.
-
-The download Worker also serves Hotfix Server downloads:
+This Worker also serves Hotfix Server downloads:
 `/dl/server-linux` (.deb), `-linux-rpm`, `-linux-tar`, `-linux-arm64`
 (+ `-rpm`, `-tar`), `/dl/server-windows` (+ `-arm64`), `/dl/server-macos`
 (Apple Silicon), `/dl/server-macos-intel`. They take the newest `server-v*`
 release (those are never "latest"), remembering the last good link in KV for
 when GitHub's API is rate-limited.
+
+Hotfix Server licensing runs on Railway, not here: see `license-api/README.md`.

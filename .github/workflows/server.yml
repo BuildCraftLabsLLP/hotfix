@@ -5,9 +5,9 @@ name: Server
 
 on:
   push:
-    paths: ["server/**", "worker/src/server-api.js", "worker/test/server-api*.mjs", "worker/migrations/**", ".github/workflows/server.yml"]
+    paths: ["server/**", "license-api/**", ".github/workflows/server.yml"]
   pull_request:
-    paths: ["server/**", "worker/src/server-api.js", "worker/test/server-api*.mjs", "worker/migrations/**", ".github/workflows/server.yml"]
+    paths: ["server/**", "license-api/**", ".github/workflows/server.yml"]
   release:
     types: [created]
   workflow_dispatch:
@@ -135,23 +135,67 @@ jobs:
           sc.exe query hotfixd; if ($LASTEXITCODE -eq 0) { throw "service still registered" }
           exit 0  # sc.exe query failing above is the expected outcome
 
-  # The licensing API (worker/src/server-api.js) against real SQLite (node:sqlite).
+  # The licensing API (license-api/): tests on PGlite and on a real PostgreSQL,
+  # the real entry point (server.js) against PostgreSQL, and the Docker image
+  # Railway deploys.
   api:
     if: github.event_name != 'release' || startsWith(github.event.release.tag_name, 'server-v')
     runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    defaults:
+      run:
+        working-directory: license-api
+    env:
+      PG_URL: postgres://postgres:postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - run: node --test worker/test/server-api.test.mjs
+          cache: npm
+          cache-dependency-path: license-api/package-lock.json
+      - run: npm ci
+      - name: Tests on PGlite
+        run: npm test
+      - name: Tests on PostgreSQL 16
+        run: TEST_DATABASE_URL="$PG_URL" npm test
+      - name: server.js against PostgreSQL (start, migrate, serve, restart)
+        run: |
+          set -x
+          export DATABASE_URL="$PG_URL" PORT=8080 RAZORPAY_KEY_ID=rzp_test_x RAZORPAY_KEY_SECRET=x RAZORPAY_WEBHOOK_SECRET=x RAZORPAY_SERVER_PLAN_ID=plan_x
+          export SERVER_LICENSE_SIGNING_KEY="$(node scripts/gen-license-key.mjs | sed -n 5p)"
+          for run in 1 2; do   # the second start re-runs migrations: must be a no-op
+            node src/server.js > /tmp/srv.log 2>&1 &
+            PID=$!
+            for i in $(seq 1 30); do curl -fs localhost:8080/healthz && break; sleep 1; done
+            curl -fs -X POST localhost:8080/api/server/trial -H 'Content-Type: application/json' \
+              -d "{\"fingerprint\":\"$(printf 'a%.0s' $(seq 64))\"}" | grep -q token
+            curl -fs localhost:8080/api/server/buy | grep -q 'per server per month'
+            kill $PID; wait $PID || true
+          done
+          cat /tmp/srv.log
+      - name: Docker image builds
+        run: docker build -t hotfix-license-api .
 
   # hotfixd (a real, installed service) against the real licensing API run
-  # locally (worker/test/server-api-harness.mjs) with a zero-day trial: while
+  # locally on PostgreSQL (license-api/test/harness.mjs) with a zero-day trial: while
   # unlicensed, enforce mode must NOT kill; after `license activate` it must.
   license-e2e:
     if: github.event_name != 'release' || startsWith(github.event.release.tag_name, 'server-v')
     runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v4
@@ -164,7 +208,9 @@ jobs:
       - name: Start the licensing API locally
         run: |
           mkdir -p /tmp/lic
-          TRIAL_DAYS=0 nohup node worker/test/server-api-harness.mjs 8787 /tmp/lic > /tmp/lic/api.log 2>&1 &
+          (cd license-api && npm ci)
+          TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres TRIAL_DAYS=0 \
+            nohup node license-api/test/harness.mjs 8787 /tmp/lic > /tmp/lic/api.log 2>&1 &
           for i in $(seq 1 40); do [ -s /tmp/lic/license-key ] && break; sleep 0.5; done
           cat /tmp/lic/api.log
       - name: Build hotfixd against it

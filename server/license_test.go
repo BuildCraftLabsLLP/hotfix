@@ -52,7 +52,7 @@ func TestParseLicenseToken(t *testing.T) {
 	}
 }
 
-// A token signed by the real Worker code (worker/src/server-api.js signToken,
+// A token signed by the real licensing API code (license-api/src/app.js signToken,
 // run under Node) must verify here, so the two never drift apart.
 func TestParseLicenseToken_WorkerFixture(t *testing.T) {
 	const (
@@ -95,7 +95,7 @@ func TestIsNewer(t *testing.T) {
 	}
 }
 
-// fakeLicenseServer answers like worker/src/server-api.js.
+// fakeLicenseServer answers like license-api/src/app.js.
 type fakeLicenseServer struct {
 	t        *testing.T
 	priv     ed25519.PrivateKey

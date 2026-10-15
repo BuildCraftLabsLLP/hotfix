@@ -80,7 +80,7 @@ Users read; `license.json` is admin-only (0600 on Unix).
 - Identity: an HMAC of the machine ID (`/etc/machine-id`, `MachineGuid`,
   `IOPlatformUUID`; the raw ID never leaves the machine) plus a random
   instance id per install. Cloned machines: `hotfixd license reset-identity`.
-- Server side: `worker/src/server-api.js` (see `worker/README.md`).
+- Server side: `license-api/` (Node + PostgreSQL on Railway, `license.buildcraft.town`; see `license-api/README.md`).
 - Builds without `-X main.licensePublicKey=…` are development builds: they
   don't enforce licensing and refuse `install` (set
   `HOTFIXD_ALLOW_DEV_INSTALL=1` to test one).

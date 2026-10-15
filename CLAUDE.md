@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Hotfix is a cross-platform (macOS + Windows + Linux) system tray app that monitors CPU usage and kills runaway processes before fans spin up. The macOS app is written in Swift/SwiftUI; the Windows and Linux apps are written in Go (two separate modules, `windows/` and `linux/`, that share no code).
 
-**Hotfix Server** (`server/`, binary `hotfixd`) is a separate, **paid** product: a headless system service for Linux, Windows and macOS ($1/server/month, 14-day trial, Razorpay). It is its own Go module (copies, never imports, code from `linux/`), is licensed **Elastic License 2.0** (`server/LICENSE`; everything else is MIT), and ships on its own `server-v*` releases. Full reference: `server/README.md`.
+**Hotfix Server** (`server/`, binary `hotfixd`) is a separate, **paid** product: a headless system service for Linux, Windows and macOS ($1/server/month, 14-day trial, Razorpay). Its licensing API (`license-api/`) is a Node + PostgreSQL service on **Railway** at `license.buildcraft.town`. It is its own Go module (copies, never imports, code from `linux/`), is licensed **Elastic License 2.0** (`server/LICENSE`; everything else is MIT), and ships on its own `server-v*` releases. Full reference: `server/README.md`.
 
 ## Build Commands
 
@@ -133,9 +133,13 @@ One CGO-free Go binary, `hotfixd`, per OS/CPU; `package main` with build-tagged 
 - **`license.go`** / **`license_cli.go`** / **`fingerprint_<os>.go`** — client licensing, adapted from the old desktop licensing (git `1c713ee`): Ed25519 tokens (`product: "server"`) verified with the key stamped by `-X main.licensePublicKey`. Fingerprint = HMAC of machine-id / MachineGuid / IOPlatformUUID; a random `instance_id` (re-minted when the fingerprint changes) is the seat identity. `licenseManager` refreshes every 6 h (seat + secret, or the trial), auto-activates from `HOTFIXD_LICENSE_KEY`/`license_key_file`, tolerates 7 days offline, and never overwrites a concurrent CLI change to `license.json`.
 - **`packaging/`** — `release.sh` (all archives, .deb/.rpm via nfpm, SHA256SUMS), `nfpm.yaml` + install/remove scripts, `install.sh`/`install.ps1` (and uninstall) for the archives, default `config.json` (a test keeps it equal to `defaultConfig()`).
 
+### Hotfix Server licensing API (`license-api/`, Railway)
+
+A Node 24 service (`src/server.js`, Dockerfile, `railway.json`) on Railway at **`license.buildcraft.town`**, backed by **Railway PostgreSQL** (`src/db.js`: node-postgres in production, PGlite in tests; `migrations/*.sql` applied at startup). `src/app.js` is the fetch-style handler: buy/checkout/success (keys shown once, only SHA-256 hashes stored), activate/refresh/deactivate (seat leases; activation locks the license row `FOR UPDATE` so concurrent activations can't oversell), trial (per fingerprint, per-network daily cap), manage, recover, Razorpay webhook (signature + re-fetch). Client IP = `X-Real-IP` from Railway's edge, so the subdomain must be DNS-only (not Cloudflare-proxied). Tests: `cd license-api && npm test` (PGlite; set `TEST_DATABASE_URL` for real Postgres, as CI does). Setup: `license-api/README.md`.
+
 ### Website & download counter (`docs/`, `worker/`)
 
-- **Hotfix Server pages and API**: `docs/server.html` (product page, linked from the main nav) and a **separate Worker** for licensing, `worker/src/server-api.js` (`wrangler.server.toml`, route `/api/server/*`, D1 for licenses/subscriptions/seats + KV for trials) — buy/checkout/success (keys shown once, only hashes stored), activate/refresh/deactivate (seat leases, atomic count-and-insert), trial (per fingerprint, per-network daily cap), manage, recover, webhook. Setup: `worker/README.md`. The download Worker also serves `/dl/server-*` from the newest `server-v*` release.
+- **Hotfix Server pages**: `docs/server.html` (product page, linked from the main nav; Buy/Manage go to `license.buildcraft.town`). The download Worker also serves `/dl/server-*` from the newest `server-v*` release (never "latest"; last good link kept in KV).
 
 The marketing site lives in `docs/` (served by GitHub Pages from `main` at `hotfix.buildcraft.town`). Its Download buttons point at **`hotfix.buildcraft.town/dl/mac`** and **`/dl/win`** and **`/dl/linux`** (the `.deb`; the Worker also serves **`/dl/linux-rpm`**, **`/dl/linux-tar`** and **`/dl/linux-arm64`**, linked from the download note), handled by a Cloudflare Worker in `worker/` (`worker/src/worker.js`, config `worker/wrangler.toml`):
 
@@ -147,7 +151,7 @@ The marketing site lives in `docs/` (served by GitHub Pages from `main` at `hotf
 ## Key Constraints
 
 - **Tests** — Go unit tests live in `windows/*_test.go` (build-tagged `//go:build windows`). They run on the Windows CI runner via `go test ./...`. Swift tests run via `swift test` on the macOS runner. There is no way to execute the Windows tests locally on macOS. The Linux tests live in `linux/*_test.go` (build-tagged `//go:build linux`) and run on the Ubuntu CI runner; they can't be executed on Windows or macOS either.
-- **Hotfix Server tests** (`server/*_test.go`) are mostly untagged and run natively on every OS, including on Windows locally; CI (`server.yml`) also runs real service install/kill/uninstall cycles on each OS and a licensing end-to-end run. Licensing API tests: `node --test worker/test/server-api.test.mjs` (Node 24+).
+- **Hotfix Server tests** (`server/*_test.go`) are mostly untagged and run natively on every OS, including on Windows locally; CI (`server.yml`) also runs real service install/kill/uninstall cycles on each OS and a licensing end-to-end run. Licensing API tests: `cd license-api && npm test` (Node 24+).
 - **Version must be bumped in multiple files** — forgetting one will cause the update checker to behave incorrectly or CI to produce a mismatched binary.
 - macOS binary is **not notarized**; users must right-click → Open on first launch.
 - Windows build sets `-H windowsgui`, so `fmt.Print` / `log` output goes nowhere — use the file logger (`initLog` / `logf`).

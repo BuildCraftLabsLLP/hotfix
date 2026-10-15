@@ -1,6 +1,6 @@
 package main
 
-// Licensing, the client side of worker/src/server-api.js. Adapted from the
+// Licensing, the client side of license-api/ (license.buildcraft.town). Adapted from the
 // earlier desktop licensing (git show 1c713ee:linux/license.go): the same
 // Ed25519-signed token format, verified against a public key compiled in at
 // build time, plus seats, a per-machine trial and service-friendly state.
@@ -37,7 +37,7 @@ var (
 	licensePublicKey = ""
 
 	// licenseAPIBase is the licensing API (no trailing slash).
-	licenseAPIBase = "https://hotfix.buildcraft.town/api/server"
+	licenseAPIBase = "https://license.buildcraft.town/api/server"
 )
 
 const (
@@ -444,7 +444,7 @@ func lockReason(c licenseClaims) string {
 	case c.Plan == "trial_expired":
 		return "the 14-day trial has ended; activate a license key (hotfix.buildcraft.town/server.html)"
 	default:
-		return "the license's subscription is not active; renew it at hotfix.buildcraft.town/api/server/manage"
+		return "the license's subscription is not active; renew it at license.buildcraft.town/api/server/manage"
 	}
 }
 

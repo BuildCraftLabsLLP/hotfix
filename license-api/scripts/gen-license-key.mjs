@@ -2,8 +2,8 @@
 //
 //   node scripts/gen-server-license-key.mjs
 //
-// PRIVATE key -> Cloudflare secret of the server API Worker (never commit it):
-//   wrangler secret put SERVER_LICENSE_SIGNING_KEY -c wrangler.server.toml
+// PRIVATE key -> the Railway service variable SERVER_LICENSE_SIGNING_KEY
+//   (never commit it).
 // PUBLIC key  -> GitHub repo variable SERVER_LICENSE_PUBLIC_KEY (Settings →
 //   Secrets and variables → Actions → Variables); CI compiles it into hotfixd.
 //
@@ -20,5 +20,5 @@ const priv = privateKey.export({ type: "pkcs8", format: "der" });
 console.log("SERVER_LICENSE_PUBLIC_KEY  (GitHub Actions variable, safe to share):");
 console.log(pub.toString("base64"));
 console.log();
-console.log("SERVER_LICENSE_SIGNING_KEY (Cloudflare secret, keep private):");
+console.log("SERVER_LICENSE_SIGNING_KEY (Railway variable, keep private):");
 console.log(priv.toString("base64"));

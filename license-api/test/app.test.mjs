@@ -1,16 +1,15 @@
-// Tests for the Hotfix Server licensing API (worker/src/server-api.js).
-//   node --test worker/test/server-api.test.mjs      (Node 24+: uses node:sqlite)
-// D1 is real SQLite (node:sqlite) with the real migration; KV and the Razorpay
-// and GitHub APIs are faked in-process. Nothing touches the network.
-import { test, beforeEach, afterEach } from "node:test";
+// Tests for the Hotfix Server licensing API (src/app.js).
+//   npm test                     (in license-api/; Node 24+)
+// The database is PostgreSQL: PGlite (Postgres in WebAssembly) by default, or a
+// real server when TEST_DATABASE_URL is set (CI), emptied between tests. The
+// Razorpay and GitHub APIs are faked in-process. Nothing touches the network.
+import { test, beforeEach, afterEach, after } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { createHmac, generateKeyPairSync, verify as edVerify } from "node:crypto";
-import { DatabaseSync } from "node:sqlite";
 
-import api, { makeKey, normalizeKey } from "../src/server-api.js";
+import api, { makeKey, normalizeKey } from "../src/app.js";
+import { pglite, postgres } from "../src/db.js";
 
-const SCHEMA = readFileSync(new URL("../migrations/0001_server_licensing.sql", import.meta.url), "utf8");
 const KEY_ID = "rzp_test_key";
 const KEY_SECRET = "rzp_test_secret";
 const WEBHOOK_SECRET = "whsec_server";
@@ -19,41 +18,27 @@ const { publicKey, privateKey } = generateKeyPairSync("ed25519");
 const fp = (c) => c.repeat(64);
 const inst = (c) => c.repeat(32);
 
-// D1's API over node:sqlite.
-function fakeD1() {
-  const db = new DatabaseSync(":memory:");
-  db.exec(SCHEMA);
-  const statement = (sql, args = []) => ({
-    bind: (...a) => statement(sql, a),
-    first: async () => db.prepare(sql).get(...args) ?? null,
-    all: async () => ({ results: db.prepare(sql).all(...args) }),
-    run: async () => ({ meta: { changes: Number(db.prepare(sql).run(...args).changes) } }),
-  });
-  return { prepare: (sql) => statement(sql), db };
+// One real Postgres for the whole run (CI), or a fresh PGlite per test.
+const shared = process.env.TEST_DATABASE_URL ? await postgres(process.env.TEST_DATABASE_URL) : null;
+after(async () => shared && (await shared.close()));
+let store;
+async function freshStore() {
+  if (!shared) return pglite();
+  await shared.db.prepare("TRUNCATE seats, subscriptions, licenses, kv").run();
+  return shared;
 }
-
-function fakeKV() {
-  const m = new Map();
-  return {
-    m,
-    async get(k, type) {
-      const v = m.get(k);
-      return v === undefined ? null : type === "json" ? JSON.parse(v) : v;
-    },
-    async put(k, v) {
-      m.set(k, v);
-    },
-  };
-}
+// Direct SQL for assertions.
+const sql = async (text, ...args) => (await store.db.prepare(text).bind(...args).all()).results;
 
 let env, rzp, rzpCalls, clock;
 const realFetch = globalThis.fetch;
 const realNow = Date.now;
 
-beforeEach(() => {
+beforeEach(async () => {
+  store = await freshStore();
   env = {
-    HOTFIX_SERVER_DB: fakeD1(),
-    HOTFIX_SERVER_KV: fakeKV(),
+    DB: store.db,
+    KV: store.kv,
     RAZORPAY_KEY_ID: KEY_ID,
     RAZORPAY_KEY_SECRET: KEY_SECRET,
     RAZORPAY_WEBHOOK_SECRET: WEBHOOK_SECRET,
@@ -101,15 +86,16 @@ beforeEach(() => {
   };
 });
 
-afterEach(() => {
+afterEach(async () => {
+  if (!shared) await store.close();
   globalThis.fetch = realFetch;
   Date.now = realNow;
 });
 
 const call = (path, init = {}) =>
-  api.fetch(new Request(`https://hotfix.buildcraft.town/api/server/${path}`, { ...init, headers: { "CF-Connecting-IP": "203.0.113.7", ...(init.headers || {}) } }), env);
+  api.fetch(new Request(`https://license.buildcraft.town/api/server/${path}`, { ...init, headers: { "X-Client-IP": "203.0.113.7", ...(init.headers || {}) } }), env);
 const postJSON = (path, body, ip) =>
-  call(path, { method: "POST", body: JSON.stringify(body), headers: { "Content-Type": "application/json", ...(ip ? { "CF-Connecting-IP": ip } : {}) } });
+  call(path, { method: "POST", body: JSON.stringify(body), headers: { "Content-Type": "application/json", ...(ip ? { "X-Client-IP": ip } : {}) } });
 const postForm = (path, fields) => call(path, { method: "POST", body: new URLSearchParams(fields).toString(), headers: { "Content-Type": "application/x-www-form-urlencoded" } });
 
 function claims(token) {
@@ -203,7 +189,7 @@ test("buy: checkout creates a subscription for N seats; success issues keys once
   assert.match(again, /already processed/);
   assert.doesNotMatch(again, /HFXS-/, "keys are never shown twice");
 
-  const stored = env.HOTFIX_SERVER_DB.db.prepare("SELECT * FROM licenses").all();
+  const stored = await sql("SELECT * FROM licenses");
   assert.equal(stored.length, 1);
   assert.doesNotMatch(JSON.stringify(stored), new RegExp(keys.activation.replace(/-/g, "").slice(4)), "only hashes are stored");
 });
@@ -214,7 +200,7 @@ test("buy: forged or unpaid callbacks issue nothing", async () => {
   assert.equal((await paySuccess(subId, { signature: "0".repeat(64) })).status, 400);
   // Genuine signature but the subscription isn't paid.
   assert.match(await (await paySuccess(subId)).text(), /Payment not completed/);
-  assert.equal(env.HOTFIX_SERVER_DB.db.prepare("SELECT COUNT(*) n FROM licenses").get().n, 0);
+  assert.equal(Number((await sql("SELECT COUNT(*) n FROM licenses"))[0].n), 0);
   assert.match(await (await postForm("checkout", { quantity: "0" })).text(), /between 1 and/);
 });
 
@@ -368,7 +354,7 @@ test("webhook: signature checked; state re-fetched from Razorpay", async () => {
   assert.equal((await call("webhook", signed(ev, "wrong"))).status, 400);
   // The event says cancelled, Razorpay says active: Razorpay wins.
   assert.equal((await call("webhook", signed(ev))).status, 200);
-  assert.equal(env.HOTFIX_SERVER_DB.db.prepare("SELECT status FROM subscriptions WHERE id = ?").get(subId).status, "active");
+  assert.equal((await sql("SELECT status FROM subscriptions WHERE id = ?", subId))[0].status, "active");
   // Unknown subscriptions are ignored.
   const other = { event: "subscription.activated", payload: { subscription: { entity: { id: "sub_UNKNOWN0000000" } } } };
   assert.equal((await call("webhook", signed(other))).status, 200);

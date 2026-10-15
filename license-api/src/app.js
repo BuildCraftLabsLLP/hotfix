@@ -1,7 +1,7 @@
-// Hotfix Server licensing API: hotfix.buildcraft.town/api/server/*
+// Hotfix Server licensing API: license.buildcraft.town/api/server/*
 //
-// A separate Worker from the /dl download counter (wrangler.server.toml), so
-// its bindings and secrets never block a download-link deploy.
+// A Node service on Railway (src/server.js) backed by PostgreSQL (src/db.js).
+// The handler is fetch-style (Request in, Response out).
 //
 // Model: $1 per server per month on Razorpay Subscriptions (quantity = seats).
 // A purchase creates a LICENSE with two keys, shown once:
@@ -26,10 +26,10 @@
 // earlier desktop licensing; claims carry product "server". Verified by
 // server/license.go with the public key compiled into hotfixd.
 //
-// Bindings: HOTFIX_SERVER_DB (D1, migrations/), HOTFIX_SERVER_KV (trials, rate limits).
-// Secrets: RAZORPAY_KEY_SECRET, RAZORPAY_WEBHOOK_SECRET, SERVER_LICENSE_SIGNING_KEY.
-// Vars: RAZORPAY_KEY_ID, RAZORPAY_SERVER_PLAN_ID, optional TRIAL_DAYS (14),
-//       TRIAL_IP_DAILY (25), GITHUB_TOKEN (secret, for the latest-version lookup).
+// env: DB and KV (src/db.js), plus the environment variables
+//   RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, RAZORPAY_WEBHOOK_SECRET,
+//   RAZORPAY_SERVER_PLAN_ID, SERVER_LICENSE_SIGNING_KEY,
+//   optional TRIAL_DAYS (14), TRIAL_IP_DAILY (25), GITHUB_TOKEN (latest-version lookup).
 
 const PRODUCT = "server";
 const DAY = 86400;
@@ -103,19 +103,15 @@ async function trial(request, env) {
 
   const now = nowSec();
   const key = `trial:${fp}`;
-  let rec = await env.HOTFIX_SERVER_KV.get(key, "json");
+  let rec = await env.KV.get(key, "json");
   if (!rec) {
     // New trials per network per day are capped, so short-lived machines
     // (CI runners, spot fleets) can't run forever on fresh trials.
-    const net = networkOf(request);
-    const capKey = `trialnet:${net}:${new Date(now * 1000).toISOString().slice(0, 10)}`;
-    const count = parseInt((await env.HOTFIX_SERVER_KV.get(capKey)) || "0", 10);
-    if (count >= intVar(env.TRIAL_IP_DAILY, DEFAULT_TRIAL_IP_DAILY)) {
+    const capKey = `trialnet:${networkOf(request)}:${new Date(now * 1000).toISOString().slice(0, 10)}`;
+    if ((await env.KV.incr(capKey, 2 * DAY)) > intVar(env.TRIAL_IP_DAILY, DEFAULT_TRIAL_IP_DAILY)) {
       return json({ error: "trial_limit", message: "Too many new trials from this network today. Buy a license at https://hotfix.buildcraft.town/server.html" }, 429);
     }
-    await env.HOTFIX_SERVER_KV.put(capKey, String(count + 1), { expirationTtl: 2 * DAY });
-    rec = { start: now };
-    await env.HOTFIX_SERVER_KV.put(key, JSON.stringify(rec)); // never reset
+    rec = await env.KV.putIfAbsent(key, { start: now }); // never reset
   }
   const trialEnd = rec.start + intVar(env.TRIAL_DAYS, DEFAULT_TRIAL_DAYS) * DAY;
   const active = now < trialEnd;
@@ -140,54 +136,55 @@ async function activate(request, env) {
   const key = normalizeKey(b.key, "HFXS");
   if (!key) return json({ error: "invalid_key", message: "That isn't a valid activation key (HFXS-…). Check for typos." }, 400);
 
-  const lic = await env.HOTFIX_SERVER_DB.prepare("SELECT id FROM licenses WHERE activation_hash = ?").bind(await sha256hex(key)).first();
-  if (!lic) return json({ error: "invalid_key", message: "Unknown activation key." }, 403);
-
-  const now = nowSec();
-  const { seats } = await licenseSeats(env, lic.id, now);
-  if (seats === 0) return json({ error: "inactive", message: "This license has no active subscription." }, 403);
-
+  const keyHash = await sha256hex(key);
   const secret = randomHex(32);
   const secretHash = await sha256hex(secret);
-  const db = env.HOTFIX_SERVER_DB;
+  const now = nowSec();
 
-  // Same server again (reinstall, re-activation): reuse its seat.
-  const existing = await db.prepare("SELECT id FROM seats WHERE license_id = ? AND instance_id = ?").bind(lic.id, machine.instance_id).first();
-  let seatId;
-  if (existing) {
-    await db
-      .prepare("UPDATE seats SET secret_hash=?, fingerprint=?, hostname=?, os=?, version=?, boot_id=?, last_seen=?, lease_until=? WHERE id=?")
-      .bind(secretHash, machine.fingerprint, machine.hostname, machine.os, machine.version, machine.boot_id, now, now + LEASE, existing.id)
-      .run();
-    seatId = existing.id;
-  } else {
-    // One statement, so concurrent activations can't oversell: SQLite (D1)
-    // runs it atomically against the current seat count.
-    seatId = "seat_" + randomHex(12);
-    const allowed = allowedSeats(seats);
-    const res = await db
+  // One transaction with the license row locked (FOR UPDATE), so concurrent
+  // activations on a license are counted one after another and can't oversell.
+  const result = await env.DB.transaction(async (tx) => {
+    const lic = await tx.prepare("SELECT id FROM licenses WHERE activation_hash = ? FOR UPDATE").bind(keyHash).first();
+    if (!lic) return { error: json({ error: "invalid_key", message: "Unknown activation key." }, 403) };
+    const { seats } = await licenseSeats({ DB: tx }, lic.id, now);
+    if (seats === 0) return { error: json({ error: "inactive", message: "This license has no active subscription." }, 403) };
+
+    // Same server again (reinstall, re-activation): reuse its seat.
+    const existing = await tx.prepare("SELECT id FROM seats WHERE license_id = ? AND instance_id = ?").bind(lic.id, machine.instance_id).first();
+    if (existing) {
+      await tx
+        .prepare("UPDATE seats SET secret_hash=?, fingerprint=?, hostname=?, os=?, version=?, boot_id=?, last_seen=?, lease_until=? WHERE id=?")
+        .bind(secretHash, machine.fingerprint, machine.hostname, machine.os, machine.version, machine.boot_id, now, now + LEASE, existing.id)
+        .run();
+      return { licenseId: lic.id, seatId: existing.id };
+    }
+    const used = await countSeats({ DB: tx }, lic.id, now);
+    if (used >= allowedSeats(seats)) {
+      return {
+        error: json({
+          error: "no_seats",
+          message: `All ${seats} server${seats === 1 ? "" : "s"} on this license are in use (${used} active). Add servers, or release one, at https://license.buildcraft.town/api/server/manage`,
+          seats,
+          used,
+        }, 409),
+      };
+    }
+    const seatId = "seat_" + randomHex(12);
+    await tx
       .prepare(
         `INSERT INTO seats (id, license_id, secret_hash, fingerprint, instance_id, hostname, os, version, boot_id, created, last_seen, lease_until)
-         SELECT ?,?,?,?,?,?,?,?,?,?,?,?
-         WHERE (SELECT COUNT(*) FROM seats WHERE license_id = ? AND lease_until > ?) < ?`,
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
-      .bind(seatId, lic.id, secretHash, machine.fingerprint, machine.instance_id, machine.hostname, machine.os, machine.version, machine.boot_id, now, now, now + LEASE, lic.id, now, allowed)
+      .bind(seatId, lic.id, secretHash, machine.fingerprint, machine.instance_id, machine.hostname, machine.os, machine.version, machine.boot_id, now, now, now + LEASE)
       .run();
-    if (!res.meta || res.meta.changes !== 1) {
-      const used = await countSeats(env, lic.id, now);
-      return json({
-        error: "no_seats",
-        message: `All ${seats} server${seats === 1 ? "" : "s"} on this license are in use (${used} active). Add servers, or release one, at https://hotfix.buildcraft.town/api/server/manage`,
-        seats,
-        used,
-      }, 409);
-    }
     // Housekeeping: drop seats whose lease ended long ago.
-    await db.prepare("DELETE FROM seats WHERE license_id = ? AND lease_until < ?").bind(lic.id, now - 30 * DAY).run();
-  }
+    await tx.prepare("DELETE FROM seats WHERE license_id = ? AND lease_until < ?").bind(lic.id, now - 30 * DAY).run();
+    return { licenseId: lic.id, seatId };
+  });
+  if (result.error) return result.error;
 
-  const token = await seatToken(env, { seatId, licenseId: lic.id, fp: machine.fingerprint, live: true, now });
-  return json({ seat_id: seatId, seat_secret: secret, token });
+  const token = await seatToken(env, { seatId: result.seatId, licenseId: result.licenseId, fp: machine.fingerprint, live: true, now });
+  return json({ seat_id: result.seatId, seat_secret: secret, token });
 }
 
 async function refresh(request, env) {
@@ -196,7 +193,7 @@ async function refresh(request, env) {
   if (!machine || !/^seat_[0-9a-f]{24}$/.test(b.seat_id || "") || !/^[0-9a-f]{64}$/.test(b.seat_secret || "")) {
     return json({ error: "bad_request", message: "Missing or invalid seat details." }, 400);
   }
-  const db = env.HOTFIX_SERVER_DB;
+  const db = env.DB;
   const seat = await db.prepare("SELECT * FROM seats WHERE id = ?").bind(b.seat_id).first();
   if (!seat || !timingSafeEqual(seat.secret_hash, await sha256hex(b.seat_secret))) {
     // Released, expired and cleaned up, or taken over by a clone with the same identity.
@@ -218,9 +215,9 @@ async function deactivate(request, env) {
   if (!/^seat_[0-9a-f]{24}$/.test((b && b.seat_id) || "") || !/^[0-9a-f]{64}$/.test(b.seat_secret || "")) {
     return json({ error: "bad_request", message: "Missing seat details." }, 400);
   }
-  const seat = await env.HOTFIX_SERVER_DB.prepare("SELECT id, secret_hash FROM seats WHERE id = ?").bind(b.seat_id).first();
+  const seat = await env.DB.prepare("SELECT id, secret_hash FROM seats WHERE id = ?").bind(b.seat_id).first();
   if (seat && timingSafeEqual(seat.secret_hash, await sha256hex(b.seat_secret))) {
-    await env.HOTFIX_SERVER_DB.prepare("DELETE FROM seats WHERE id = ?").bind(seat.id).run();
+    await env.DB.prepare("DELETE FROM seats WHERE id = ?").bind(seat.id).run();
   }
   return json({ ok: true });
 }
@@ -260,7 +257,7 @@ function allowedSeats(seats) {
 }
 
 async function licenseSeats(env, licenseId, now) {
-  const rows = await env.HOTFIX_SERVER_DB.prepare("SELECT status, quantity, current_end FROM subscriptions WHERE license_id = ?").bind(licenseId).all();
+  const rows = await env.DB.prepare("SELECT status, quantity, current_end FROM subscriptions WHERE license_id = ?").bind(licenseId).all();
   let seats = 0;
   for (const r of rows.results || []) {
     // A cancelled subscription keeps its seats until the paid period ends.
@@ -270,8 +267,8 @@ async function licenseSeats(env, licenseId, now) {
 }
 
 async function countSeats(env, licenseId, now) {
-  const r = await env.HOTFIX_SERVER_DB.prepare("SELECT COUNT(*) AS n FROM seats WHERE license_id = ? AND lease_until > ?").bind(licenseId, now).first();
-  return r ? r.n : 0;
+  const r = await env.DB.prepare("SELECT COUNT(*) AS n FROM seats WHERE license_id = ? AND lease_until > ?").bind(licenseId, now).first();
+  return r ? Number(r.n) : 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -301,7 +298,7 @@ async function checkout(request, env, url) {
     notes: { product: PRODUCT },
     expire_by: now + DAY,
   });
-  await env.HOTFIX_SERVER_DB
+  await env.DB
     .prepare("INSERT INTO subscriptions (id, pending_license_id, status, quantity, created, updated) VALUES (?,?,?,?,?,?)")
     .bind(sub.id, pendingLicense, sub.status || "created", quantity, now, now)
     .run();
@@ -341,7 +338,7 @@ async function success(request, env, url) {
   const form = await request.formData().catch(() => new FormData());
   const paymentId = String(form.get("razorpay_payment_id") || "");
   const signature = String(form.get("razorpay_signature") || "");
-  const row = await env.HOTFIX_SERVER_DB.prepare("SELECT * FROM subscriptions WHERE id = ?").bind(subId).first();
+  const row = await env.DB.prepare("SELECT * FROM subscriptions WHERE id = ?").bind(subId).first();
   if (!row || !paymentId || !signature) {
     return page("Payment not completed", "<p>The payment didn't go through, so nothing was charged or activated.</p>");
   }
@@ -360,7 +357,7 @@ async function success(request, env, url) {
 // or a new license with fresh keys. Idempotent: only the first call for a
 // subscription links it (and so only it shows the new keys).
 async function linkOrIssue(env, url, subId, pendingLicense, quantity) {
-  const db = env.HOTFIX_SERVER_DB;
+  const db = env.DB;
   const servers = `${quantity} server${quantity === 1 ? "" : "s"}`;
   if (pendingLicense) {
     const res = await db.prepare("UPDATE subscriptions SET license_id = ? WHERE id = ? AND license_id IS NULL").bind(pendingLicense, subId).run();
@@ -401,7 +398,7 @@ async function manage(request, env, url) {
   if (!lic) return manageLoginPage(url, "That manage key wasn't recognized.");
 
   const now = nowSec();
-  const db = env.HOTFIX_SERVER_DB;
+  const db = env.DB;
   let notice = "";
   const action = String(form.get("action") || "");
   const target = String(form.get("target") || "");
@@ -440,7 +437,7 @@ async function changeQuantity(env, row, quantity) {
       } catch {
         await tryPatch("cycle_end");
       }
-      await env.HOTFIX_SERVER_DB.prepare("UPDATE subscriptions SET quantity = ?, updated = ? WHERE id = ?").bind(quantity, nowSec(), row.id).run();
+      await env.DB.prepare("UPDATE subscriptions SET quantity = ?, updated = ? WHERE id = ?").bind(quantity, nowSec(), row.id).run();
       return `Now ${quantity} servers. The extra servers can be activated right away.`;
     }
     await tryPatch("cycle_end");
@@ -453,7 +450,7 @@ async function changeQuantity(env, row, quantity) {
 async function licenseByManageKey(env, key) {
   const k = normalizeKey(key, "HFXM");
   if (!k) return null;
-  return env.HOTFIX_SERVER_DB.prepare("SELECT id FROM licenses WHERE manage_hash = ?").bind(await sha256hex(k)).first();
+  return env.DB.prepare("SELECT id FROM licenses WHERE manage_hash = ?").bind(await sha256hex(k)).first();
 }
 
 // ---------------------------------------------------------------------------
@@ -467,7 +464,7 @@ async function recover(request, env, url) {
   const paymentId = String(form.get("payment_id") || "").trim();
   if (!SUB_RE.test(subId) || !PAY_RE.test(paymentId)) return recoverPage(url, "Enter both ids exactly as they appear in the receipt (sub_… and pay_…).");
 
-  const row = await env.HOTFIX_SERVER_DB.prepare("SELECT * FROM subscriptions WHERE id = ?").bind(subId).first();
+  const row = await env.DB.prepare("SELECT * FROM subscriptions WHERE id = ?").bind(subId).first();
   if (!row) return recoverPage(url, "No Hotfix Server subscription with that id.");
   const invoices = await razorpay(env, "GET", `/invoices?subscription_id=${subId}`);
   const paid = (invoices.items || []).some((inv) => inv.payment_id === paymentId && inv.status === "paid");
@@ -480,7 +477,7 @@ async function recover(request, env, url) {
     return await linkOrIssue(env, url, subId, row.pending_license_id, sub.quantity);
   }
   const keys = { activation: makeKey("HFXS"), manage: makeKey("HFXM") };
-  await env.HOTFIX_SERVER_DB
+  await env.DB
     .prepare("UPDATE licenses SET activation_hash = ?, manage_hash = ? WHERE id = ?")
     .bind(await sha256hex(normalizeKey(keys.activation, "HFXS")), await sha256hex(normalizeKey(keys.manage, "HFXM")), row.license_id)
     .run();
@@ -500,18 +497,18 @@ async function webhook(request, env) {
   if (typeof event.event === "string" && event.event.startsWith("subscription.") && entity && SUB_RE.test(entity.id || "")) {
     // Re-fetch rather than trust the event: replays and out-of-order delivery
     // then can't store a stale state.
-    const known = await env.HOTFIX_SERVER_DB.prepare("SELECT id FROM subscriptions WHERE id = ?").bind(entity.id).first();
+    const known = await env.DB.prepare("SELECT id FROM subscriptions WHERE id = ?").bind(entity.id).first();
     if (known) await syncSubscription(env, await razorpay(env, "GET", `/subscriptions/${entity.id}`));
   }
   return text("ok", 200);
 }
 
 async function syncSubscription(env, sub, extra = {}) {
-  await env.HOTFIX_SERVER_DB
+  await env.DB
     .prepare(
-      `UPDATE subscriptions SET status = ?, current_end = COALESCE(?, current_end),
-       quantity = CASE WHEN ? > quantity OR ? = 0 THEN ? ELSE quantity END,
-       cancel_scheduled = MAX(cancel_scheduled, ?), updated = ? WHERE id = ?`,
+      `UPDATE subscriptions SET status = ?, current_end = COALESCE(?::bigint, current_end),
+       quantity = CASE WHEN ?::integer > quantity OR ?::integer = 0 THEN ?::integer ELSE quantity END,
+       cancel_scheduled = GREATEST(cancel_scheduled, ?), updated = ? WHERE id = ?`,
     )
     .bind(
       sub.status,
@@ -646,7 +643,7 @@ ${error ? `<p class="notice">${esc(error)}</p>` : ""}
 
 async function managePage(env, url, manageKey, licenseId, now, notice) {
   const { seats, subscriptions } = await licenseSeats(env, licenseId, now);
-  const servers = (await env.HOTFIX_SERVER_DB.prepare("SELECT * FROM seats WHERE license_id = ? AND lease_until > ? ORDER BY last_seen DESC").bind(licenseId, now).all()).results || [];
+  const servers = (await env.DB.prepare("SELECT * FROM seats WHERE license_id = ? AND lease_until > ? ORDER BY last_seen DESC").bind(licenseId, now).all()).results || [];
   const mk = esc(manageKey);
   const hidden = (action, target) => `<input type="hidden" name="manage_key" value="${mk}"><input type="hidden" name="action" value="${action}"><input type="hidden" name="target" value="${esc(target)}">`;
 
@@ -702,14 +699,11 @@ ${error ? `<p class="notice">${esc(error)}</p>` : ""}
 
 // Latest Hotfix Server version (from server-v* releases), so servers can log
 // that an update is out without calling GitHub themselves. Cached for an hour.
+let latestCache = { value: "", until: 0 };
+
 async function latestVersion(env) {
-  const cache = typeof caches !== "undefined" ? caches.default : null;
-  const cacheKey = "https://server-api-cache/latest-version";
+  if (Date.now() < latestCache.until) return latestCache.value;
   try {
-    if (cache) {
-      const hit = await cache.match(cacheKey);
-      if (hit) return await hit.text();
-    }
     const headers = { "User-Agent": "hotfix-server-api", Accept: "application/vnd.github+json" };
     if (env.GITHUB_TOKEN) headers.Authorization = `Bearer ${env.GITHUB_TOKEN}`;
     const res = await fetch(`https://api.github.com/repos/${REPO}/releases?per_page=30`, { headers });
@@ -718,10 +712,11 @@ async function latestVersion(env) {
       const rel = (await res.json()).find((r) => !r.draft && !r.prerelease && /^server-v\d/.test(r.tag_name));
       v = rel ? rel.tag_name.replace(/^server-v/, "") : "";
     }
-    if (cache) await cache.put(cacheKey, new Response(v, { headers: { "Cache-Control": "max-age=3600" } }));
+    latestCache = { value: v, until: Date.now() + (res.ok ? 3600_000 : 300_000) };
     return v;
   } catch {
-    return "";
+    latestCache = { value: latestCache.value, until: Date.now() + 300_000 };
+    return latestCache.value;
   }
 }
 
@@ -746,15 +741,13 @@ async function razorpay(env, method, path, body) {
 
 async function rateLimited(env, request, kind, perMinute) {
   const key = `rl:${kind}:${networkOf(request)}:${Math.floor(Date.now() / 60000)}`;
-  const n = parseInt((await env.HOTFIX_SERVER_KV.get(key)) || "0", 10);
-  if (n >= perMinute) return true;
-  await env.HOTFIX_SERVER_KV.put(key, String(n + 1), { expirationTtl: 120 });
-  return false;
+  return (await env.KV.incr(key, 120)) > perMinute;
 }
 
-// networkOf groups addresses by network: IPv4 /24, IPv6 /56.
+// networkOf groups addresses by network: IPv4 /24, IPv6 /56. The client
+// address comes from server.js (X-Client-IP, from Railway's proxy).
 function networkOf(request) {
-  const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+  const ip = request.headers.get("X-Client-IP") || "unknown";
   if (ip.includes(":")) return ip.split(":").slice(0, 4).join(":").replace(/:[0-9a-f]{0,2}$/i, ":") + "/56";
   return ip.split(".").slice(0, 3).join(".") + ".0/24";
 }
