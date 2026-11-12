@@ -4,17 +4,22 @@
 // variables listed in app.js. Migrations run at startup. GET /healthz checks
 // the database (Railway's healthcheck).
 import http from "node:http";
-import app, { RAZORPAY_VARS } from "./app.js";
+import app, { BILLING_VARS, DODO_ENVIRONMENTS } from "./app.js";
 import { postgres } from "./db.js";
 
-// The Razorpay variables are all or nothing: none = billing off (trials only).
-const rzpSet = RAZORPAY_VARS.filter((k) => process.env[k]);
-const missing = ["DATABASE_URL", "SERVER_LICENSE_SIGNING_KEY", ...(rzpSet.length ? RAZORPAY_VARS : [])].filter((k) => !process.env[k]);
+// The Dodo Payments variables are all or nothing: none = billing off (trials only).
+const billingSet = BILLING_VARS.filter((k) => process.env[k]);
+const missing = ["DATABASE_URL", "SERVER_LICENSE_SIGNING_KEY", ...(billingSet.length ? BILLING_VARS : [])].filter((k) => !process.env[k]);
 if (missing.length) {
   console.error(`license-api: missing environment variables: ${missing.join(", ")}`);
   process.exit(1);
 }
-if (!rzpSet.length) console.log("license-api: Razorpay not configured: billing off (trials and the machine API only)");
+if (billingSet.length && !DODO_ENVIRONMENTS.includes(process.env.DODO_PAYMENTS_ENVIRONMENT)) {
+  console.error(`license-api: DODO_PAYMENTS_ENVIRONMENT must be ${DODO_ENVIRONMENTS.join(" or ")}`);
+  process.exit(1);
+}
+if (billingSet.length) console.log(`license-api: billing on (Dodo Payments, ${process.env.DODO_PAYMENTS_ENVIRONMENT})`);
+else console.log("license-api: Dodo Payments not configured: billing off (trials and the machine API only)");
 
 const store = await postgres(process.env.DATABASE_URL);
 const env = { ...process.env, DB: store.db, KV: store.kv };

@@ -1,7 +1,7 @@
 // Runs the real licensing API (src/app.js) locally over HTTP for end-to-end
 // tests of hotfixd (the Server workflow's license-e2e job). The database is
-// Postgres: TEST_DATABASE_URL if set, else in-memory PGlite. No Razorpay: a
-// paid 1-server license is seeded directly.
+// Postgres: TEST_DATABASE_URL if set, else in-memory PGlite. No Dodo Payments:
+// a paid 1-server license is seeded directly.
 //
 //   node test/harness.mjs <port> <out-dir>
 //
