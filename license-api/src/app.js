@@ -31,6 +31,8 @@
 //   DODO_PAYMENTS_API_KEY, DODO_PAYMENTS_WEBHOOK_KEY, DODO_SERVER_PRODUCT_ID,
 //   DODO_PAYMENTS_ENVIRONMENT (test_mode | live_mode) (all four, or none:
 //   billing off, see BILLING_ROUTES),
+//   optional RESEND_API_KEY, REFUND_EMAIL_TO, REFUND_EMAIL_FROM (all three, or
+//   none: no refund requests, see REFUND_VARS),
 //   optional TRIAL_DAYS (14), TRIAL_IP_DAILY (25), GITHUB_TOKEN (latest-version lookup).
 
 const PRODUCT = "server";
@@ -57,6 +59,14 @@ const REPO = "BuildCraftLabsLLP/hotfix";
 // the buy page says purchases open soon, and these routes answer 503.
 export const BILLING_VARS = ["DODO_PAYMENTS_API_KEY", "DODO_PAYMENTS_WEBHOOK_KEY", "DODO_SERVER_PRODUCT_ID", "DODO_PAYMENTS_ENVIRONMENT"];
 export const DODO_ENVIRONMENTS = Object.keys(DODO_API);
+
+// Refund requests from the manage page are emailed to us through Resend: all
+// three variables, or none (then there's no "Request a refund" button). A
+// request changes nothing by itself; refunding the payment in Dodo's dashboard
+// ends the subscription (see endRefundedSubscription).
+export const REFUND_VARS = ["RESEND_API_KEY", "REFUND_EMAIL_TO", "REFUND_EMAIL_FROM"];
+const refundsEnabled = (env) => REFUND_VARS.every((k) => env[k]);
+const REFUND_WINDOW = 7 * DAY; // Dodo's own refund policy
 const billingEnabled = (env) => BILLING_VARS.every((k) => env[k]) && Object.hasOwn(DODO_API, env.DODO_PAYMENTS_ENVIRONMENT);
 const BILLING_ROUTES = new Set(["checkout", "success", "manage", "recover", "webhook"]);
 
@@ -275,8 +285,10 @@ async function licenseSeats(env, licenseId, now) {
   const rows = await env.DB.prepare("SELECT * FROM subscriptions WHERE license_id = ? ORDER BY created").bind(licenseId).all();
   let seats = 0;
   for (const r of rows.results || []) {
-    // A cancelled subscription keeps its seats until the paid period ends.
-    if (LIVE.has(r.status) || (r.status === "cancelled" && (r.current_end || 0) > now)) seats += r.quantity;
+    // A subscription cancelled at the end of its period stays active in Dodo
+    // until then; "cancelled" means it's over (or was ended at once, e.g.
+    // because it was refunded), so it keeps no seats.
+    if (LIVE.has(r.status)) seats += r.quantity;
   }
   return { seats, subscriptions: rows.results || [] };
 }
@@ -461,7 +473,7 @@ async function manage(request, env, url) {
   if (action === "release" && /^seat_[0-9a-f]{24}$/.test(target)) {
     await db.prepare("DELETE FROM seats WHERE id = ? AND license_id = ?").bind(target, lic.id).run();
     notice = "Server released. Its seat is free now; that server stops being protected at its next license check.";
-  } else if (["quantity", "cancel", "billing"].includes(action) && SUB_RE.test(target)) {
+  } else if (["quantity", "cancel", "billing", "refund"].includes(action) && SUB_RE.test(target)) {
     const row = await db.prepare("SELECT * FROM subscriptions WHERE id = ? AND license_id = ?").bind(target, lic.id).first();
     if (!row) {
       notice = "Unknown subscription.";
@@ -479,6 +491,8 @@ async function manage(request, env, url) {
       const sub = await dodo(env, "PATCH", `/subscriptions/${target}`, { cancel_at_next_billing_date: true });
       await syncSubscription(env, sub);
       notice = `Cancelled. Its servers stay covered until ${formatDate(unixOf(sub.next_billing_date) || row.current_end)}; no further charges.`;
+    } else if (action === "refund") {
+      notice = await requestRefund(env, row, String(form.get("reason") || ""), now);
     } else {
       notice = await changeQuantity(env, row, parseInt(String(form.get("quantity") || ""), 10));
     }
@@ -511,6 +525,72 @@ async function changeQuantity(env, row, quantity) {
   } catch {
     return "This subscription can't be changed right now. To add servers, buy more below; to reduce, cancel it and buy a smaller one.";
   }
+}
+
+// The payment of a subscription a refund can be requested for: its latest
+// successful charge, if it's from the last REFUND_WINDOW and not refunded.
+async function refundablePayment(env, subId, now) {
+  const list = await dodo(env, "GET", `/payments?subscription_id=${encodeURIComponent(subId)}&status=succeeded&page_size=20`);
+  const latest = (list.items || [])
+    .filter((p) => p.status === "succeeded" && p.total_amount > 0)
+    .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))[0];
+  if (!latest || latest.refund_status || now - unixOf(latest.created_at) > REFUND_WINDOW) return null;
+  return latest;
+}
+
+// A buyer's refund request: recorded (one per payment) and emailed to us. If
+// the email can't be sent, nothing is recorded, so the buyer can try again.
+async function requestRefund(env, row, reason, now) {
+  if (!refundsEnabled(env)) return "Refund requests aren't available right now.";
+  const payment = await refundablePayment(env, row.id, now);
+  if (!payment) return "This subscription has no payment from the last 7 days that can be refunded.";
+  const id = "rr_" + randomHex(12);
+  const why = reason.replace(/\r/g, "").trim().slice(0, 1000);
+  const res = await env.DB
+    .prepare("INSERT INTO refund_requests (id, license_id, subscription_id, payment_id, reason, created) VALUES (?,?,?,?,?,?) ON CONFLICT (payment_id) DO NOTHING")
+    .bind(id, row.license_id, row.id, payment.payment_id, why, now)
+    .run();
+  if (res.meta.changes !== 1) return "A refund has already been requested for this payment.";
+  try {
+    await emailRefundRequest(env, id, row, payment, why);
+  } catch (err) {
+    console.error("refund request email:", err && err.message ? err.message : err);
+    await env.DB.prepare("DELETE FROM refund_requests WHERE id = ?").bind(id).run();
+    return "Your refund request couldn't be sent right now. Please try again in a few minutes.";
+  }
+  return `Refund requested for the payment of ${formatDate(unixOf(payment.created_at))} (${money(payment)}). If it's approved, the money goes back to your original payment method and this subscription ends at once.`;
+}
+
+async function emailRefundRequest(env, id, row, payment, reason) {
+  const test = env.DODO_PAYMENTS_ENVIRONMENT !== "live_mode";
+  const customer = payment.customer || {};
+  const text = [
+    `A Hotfix Server customer asked for a refund${test ? " (Dodo Payments TEST MODE)" : ""}.`,
+    "",
+    `Payment:      ${payment.payment_id}, ${money(payment)}, ${formatDate(unixOf(payment.created_at))}`,
+    `Subscription: ${row.id}, ${plural(row.quantity, "server")}`,
+    `Customer:     ${customer.name ? `${customer.name} ` : ""}<${customer.email || "no email on file"}>`,
+    `License:      ${row.license_id}`,
+    `Request:      ${id}`,
+    "",
+    "Reason:",
+    reason || "(none given)",
+    "",
+    "To approve: refund the payment in the Dodo Payments dashboard (Transactions > Payments). When the refund succeeds, the subscription ends at once and its servers stop being licensed.",
+    customer.email ? "To decline: reply to this email; it goes to the customer." : "",
+  ].join("\n");
+  const res = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, "Content-Type": "application/json", "Idempotency-Key": id },
+    body: JSON.stringify({
+      from: env.REFUND_EMAIL_FROM,
+      to: env.REFUND_EMAIL_TO.split(",").map((s) => s.trim()).filter(Boolean),
+      subject: `${test ? "[TEST] " : ""}Refund request: Hotfix Server, ${payment.payment_id} (${money(payment)})`,
+      text,
+      ...(customer.email ? { reply_to: customer.email } : {}),
+    }),
+  });
+  if (!res.ok) throw new Error(`resend: ${res.status} ${(await res.text()).slice(0, 200)}`);
 }
 
 async function licenseByManageKey(env, key) {
@@ -568,8 +648,29 @@ async function webhook(request, env) {
       // "Add servers" purchases show no keys, so they needn't wait for the return page.
       if (!row.license_id && row.pending_license_id && LIVE.has(sub.status)) await linkPending(env, row.id, row.pending_license_id);
     }
+  } else if (event.type === "refund.succeeded" && PAY_RE.test((event.data && event.data.payment_id) || "")) {
+    await endRefundedSubscription(env, event.data.payment_id);
   }
   return text("ok", 200);
+}
+
+// We refunded a payment (from Dodo's dashboard, fully or partly): its
+// subscription ends at once, so there are no more charges and its servers stop
+// being licensed. The payment is re-read rather than trusting the event.
+async function endRefundedSubscription(env, paymentId) {
+  const payment = await found(dodo(env, "GET", `/payments/${paymentId}`));
+  if (!payment || !payment.refund_status || !SUB_RE.test(payment.subscription_id || "")) return;
+  const known = await env.DB.prepare("SELECT id FROM subscriptions WHERE id = ?").bind(payment.subscription_id).first();
+  if (!known) return;
+  let sub = await dodo(env, "GET", `/subscriptions/${payment.subscription_id}`);
+  if (!["cancelled", "expired", "failed"].includes(sub.status)) {
+    sub = await dodo(env, "PATCH", `/subscriptions/${sub.subscription_id}`, {
+      status: "cancelled",
+      cancel_reason: "cancelled_by_merchant",
+      cancellation_comment: `Refunded (${paymentId})`,
+    });
+  }
+  await syncSubscription(env, sub);
 }
 
 // Standard Webhooks (https://standardwebhooks.com), as Dodo signs them:
@@ -688,9 +789,10 @@ const STYLE = `
   .notice { background: rgba(201,70,30,.08); border: 1px solid rgba(201,70,30,.22); color: var(--dark);
             border-radius: 12px; padding: 12px 16px; margin-bottom: 22px; font-size: 14px; }
   label.field { display: block; font-size: 13px; font-weight: 700; margin-bottom: 6px; }
-  input { font: inherit; width: 100%; padding: 11px 13px; border: 1px solid rgba(20,20,22,.16); border-radius: 10px;
+  input, textarea { font: inherit; width: 100%; padding: 11px 13px; border: 1px solid rgba(20,20,22,.16); border-radius: 10px;
           background: #fff; color: var(--dark); }
-  input:focus { outline: 3px solid rgba(201,70,30,.18); border-color: var(--accent); }
+  textarea { resize: vertical; }
+  input:focus, textarea:focus { outline: 3px solid rgba(201,70,30,.18); border-color: var(--accent); }
   .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; font: inherit; font-size: 14px;
          font-weight: 700; padding: 12px 22px; border-radius: 10px; border: 0; cursor: pointer; text-decoration: none;
          background: var(--accent); color: #fff; white-space: nowrap; }
@@ -750,6 +852,9 @@ const STYLE = `
   .badge.bad { background: rgba(179,38,30,.10); color: var(--bad); }
   .badge.muted { background: var(--card); color: var(--muted); }
   .alert { margin-top: 14px; font-size: 13px; color: var(--bad); }
+  .refund { margin: 18px 0 0; padding-top: 14px; border-top: 1px solid var(--border); }
+  .refund form { margin-top: 10px; }
+  .refund .btn { margin-top: 10px; }
   .add { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
   .add .stepper { flex: 1; min-width: 200px; }
   footer { padding: 26px 20px; text-align: center; font-size: 12px; color: var(--muted); border-top: 1px solid var(--border); }
@@ -896,6 +1001,30 @@ async function managePage(env, url, manageKey, licenseId, now, message) {
   const mk = esc(manageKey);
   const hidden = (action, target) => `<input type="hidden" name="manage_key" value="${mk}"><input type="hidden" name="action" value="${action}"><input type="hidden" name="target" value="${esc(target)}">`;
 
+  // Each subscription's refundable payment, and the request already made for it.
+  const refunds = new Map();
+  if (refundsEnabled(env)) {
+    for (const s of subscriptions.filter((s) => !["pending", "failed"].includes(s.status))) {
+      const payment = await refundablePayment(env, s.id, now);
+      if (payment) refunds.set(s.id, { payment, asked: await env.DB.prepare("SELECT created FROM refund_requests WHERE payment_id = ?").bind(payment.payment_id).first() });
+    }
+  }
+  const refundBlock = (s) => {
+    const r = refunds.get(s.id);
+    if (!r) return "";
+    const paid = `the payment of ${formatDate(unixOf(r.payment.created_at))} (${esc(money(r.payment))})`;
+    if (r.asked) {
+      return `<p class="small refund">Refund requested on ${formatDate(r.asked.created)} for ${paid}. If it's approved, the money goes back to your original payment method and this subscription ends.</p>`;
+    }
+    return `<details class="refund"><summary>Request a refund</summary>
+<form method="post">${hidden("refund", s.id)}
+<p class="small">For ${paid}. Refunds can be requested within 7 days of a payment. If it's approved, the money goes back to your original payment method and this subscription ends at once.</p>
+<label class="field" for="reason-${esc(s.id)}">Reason (optional)</label>
+<textarea id="reason-${esc(s.id)}" name="reason" rows="3" maxlength="1000"></textarea>
+<button class="btn quiet danger">Send refund request</button>
+</form></details>`;
+  };
+
   const subCards = subscriptions
     .map((s) => {
       const live = LIVE.has(s.status) && !s.cancel_scheduled;
@@ -909,7 +1038,8 @@ ${s.status === "on_hold" ? `<p class="alert">The last payment failed. Update you
 ${live ? `<form class="inline" method="post">${hidden("quantity", s.id)}<input name="quantity" type="number" min="1" max="${MAX_QUANTITY}" value="${s.quantity}" aria-label="Servers"><button class="btn quiet">Change</button></form>` : ""}
 ${s.customer_id ? `<form class="inline" method="post">${hidden("billing", s.id)}<button class="btn quiet">Billing</button></form>` : ""}
 ${live ? `<form class="inline" method="post" onsubmit="return confirm('Cancel this subscription at the end of the paid period?')">${hidden("cancel", s.id)}<button class="btn quiet danger">Cancel</button></form>` : ""}
-</div></div>`;
+</div>
+${refundBlock(s)}</div>`;
     })
     .join("");
   const serverRows = servers
@@ -1052,6 +1182,7 @@ const intVar = (v, d) => {
 };
 const formatDate = (unix) => (unix ? new Date(unix * 1000).toUTCString().slice(5, 16) : "");
 const unixOf = (iso) => (iso ? Math.floor(Date.parse(iso) / 1000) || null : null);
+const money = (p) => `${(p.total_amount / 100).toFixed(2)} ${p.currency}`;
 
 async function readJSON(request) {
   try {

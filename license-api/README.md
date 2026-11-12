@@ -56,6 +56,7 @@ railway up --service license-api    # build the Dockerfile and deploy this folde
    | `DODO_PAYMENTS_API_KEY` | the API key from step 1 |
    | `DODO_SERVER_PRODUCT_ID` | `pdt_…` from step 1 |
    | `DODO_PAYMENTS_WEBHOOK_KEY` | the webhook's signing secret (`whsec_…`) from step 5 |
+   | `RESEND_API_KEY`, `REFUND_EMAIL_TO`, `REFUND_EMAIL_FROM` | optional, all three or none: refund requests (see [Refunds](#refunds)) |
    | `GITHUB_TOKEN` | optional: a read-only token, for the "new version available" lookup |
    | `TRIAL_DAYS`, `TRIAL_IP_DAILY` | optional: 14 and 25 by default |
 
@@ -77,10 +78,10 @@ Cloudflare address and trip the per-network trial cap.
 
 **5. Dodo Payments webhook** (Developer → Webhooks → Add endpoint):
 `https://license.buildcraft.town/api/server/webhook`, events: all
-`subscription.*`. Copy its signing secret into `DODO_PAYMENTS_WEBHOOK_KEY`.
-Every event is checked (Standard Webhooks signature, at most 5 minutes old)
-and the subscription is then re-read from Dodo, so a replayed or out-of-order
-event can't store a stale state.
+`subscription.*` and `refund.succeeded`. Copy its signing secret into
+`DODO_PAYMENTS_WEBHOOK_KEY`. Every event is checked (Standard Webhooks
+signature, at most 5 minutes old) and the subscription or payment is then
+re-read from Dodo, so a replayed or out-of-order event can't store a stale state.
 
 How a purchase flows: `checkout` creates a Dodo checkout session and records
 it (`checkouts` table) under a random ref, which goes into the return URL and
@@ -103,6 +104,31 @@ variables to the live values.
 Deploys: `railway up --service license-api` from this folder. (To deploy on
 every push to `main` instead, connect the service to the GitHub repo in its
 Settings, with Root Directory `/license-api` and watch path `/license-api/**`.)
+
+## Refunds
+
+Buyers ask, we decide. On the manage page, a subscription whose latest payment
+is less than 7 days old (Dodo's refund policy) and not refunded shows
+**Request a refund**, with an optional reason. The request is stored
+(`refund_requests`, one per payment) and emailed to `REFUND_EMAIL_TO` through
+[Resend](https://resend.com), with the customer's email as Reply-To. If the
+email fails, nothing is stored and the buyer can try again. A request changes
+nothing else.
+
+To approve one, refund the payment in Dodo's dashboard. The `refund.succeeded`
+webhook then ends its subscription at once (status `cancelled`), so there are
+no more charges and its servers stop being licensed. That happens for any
+refund of a subscription payment, full or partial, requested or not. To
+decline one, reply to the email. Refunds are paid from your Dodo balance
+(after its tax and fees), so a refund can fail right after a payout; Dodo also
+charges a fee per refund and keeps the original payment's fee.
+
+Resend setup: create an account, verify a sending domain (e.g.
+`buildcraft.town`: add the DNS records Resend shows in Cloudflare), and create
+an API key with sending access. Then set `RESEND_API_KEY`, `REFUND_EMAIL_FROM`
+(e.g. `Hotfix Server <refunds@buildcraft.town>`, on the verified domain) and
+`REFUND_EMAIL_TO` (your inbox; several separated by commas). Without them the
+button is hidden.
 
 ## Backups
 

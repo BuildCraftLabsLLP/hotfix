@@ -24,13 +24,13 @@ after(async () => shared && (await shared.close()));
 let store;
 async function freshStore() {
   if (!shared) return pglite();
-  await shared.db.prepare("TRUNCATE seats, checkouts, subscriptions, licenses, kv").run();
+  await shared.db.prepare("TRUNCATE refund_requests, seats, checkouts, subscriptions, licenses, kv").run();
   return shared;
 }
 // Direct SQL for assertions.
 const sql = async (text, ...args) => (await store.db.prepare(text).bind(...args).all()).results;
 
-let env, dodo, dodoCalls, clock;
+let env, dodo, dodoCalls, emails, clock;
 const realFetch = globalThis.fetch;
 const realNow = Date.now;
 const iso = (unix) => new Date(unix * 1000).toISOString();
@@ -44,6 +44,9 @@ beforeEach(async () => {
     DODO_PAYMENTS_WEBHOOK_KEY: WEBHOOK_KEY,
     DODO_SERVER_PRODUCT_ID: PRODUCT_ID,
     DODO_PAYMENTS_ENVIRONMENT: "test_mode",
+    RESEND_API_KEY: "re_test",
+    REFUND_EMAIL_TO: "billing@buildcraft.town",
+    REFUND_EMAIL_FROM: "Hotfix Server <refunds@buildcraft.town>",
     SERVER_LICENSE_SIGNING_KEY: privateKey.export({ type: "pkcs8", format: "der" }).toString("base64"),
   };
   clock = 1_800_000_000;
@@ -52,10 +55,17 @@ beforeEach(async () => {
   // (undocumented; the app also matches by the payment's checkout session).
   dodo = { sessions: [], subs: new Map(), payments: new Map(), changeFails: [], copyMetadata: true };
   dodoCalls = [];
+  emails = { sent: [], fail: false };
   globalThis.fetch = async (url, init = {}) => {
     const u = new URL(url);
     if (u.origin === "https://api.github.com") {
       return Response.json([{ tag_name: "v1.0.13", draft: false, prerelease: false }, { tag_name: "server-v1.2.0", draft: false, prerelease: false }]);
+    }
+    if (u.origin === "https://api.resend.com") {
+      assert.equal(init.headers.Authorization, "Bearer re_test");
+      if (emails.fail) return Response.json({ message: "domain not verified" }, { status: 403 });
+      emails.sent.push({ ...JSON.parse(init.body), idempotencyKey: init.headers["Idempotency-Key"] });
+      return Response.json({ id: `email_${emails.sent.length}` });
     }
     assert.equal(u.origin, "https://test.dodopayments.com");
     assert.equal(init.headers.Authorization, `Bearer ${API_KEY}`);
@@ -83,7 +93,8 @@ beforeEach(async () => {
       return Response.json({ payment_id: null });
     }
     if (u.pathname === "/payments") {
-      return Response.json({ items: [...dodo.payments.values()].filter((p) => p.subscription_id === u.searchParams.get("subscription_id")) });
+      const status = u.searchParams.get("status");
+      return Response.json({ items: [...dodo.payments.values()].filter((p) => p.subscription_id === u.searchParams.get("subscription_id") && (!status || p.status === status)) });
     }
     if ((m = u.pathname.match(/^\/payments\/(pay_\w+)$/))) {
       return dodo.payments.has(m[1]) ? Response.json(dodo.payments.get(m[1])) : notFound();
@@ -139,7 +150,17 @@ function pay(session, { status = "active" } = {}) {
     scheduled_change: null,
   });
   const paymentId = `pay_${String(n).padStart(14, "0")}`;
-  dodo.payments.set(paymentId, { payment_id: paymentId, subscription_id: subId, checkout_session_id: session.session_id, status: "succeeded" });
+  dodo.payments.set(paymentId, {
+    payment_id: paymentId,
+    subscription_id: subId,
+    checkout_session_id: session.session_id,
+    status: "succeeded",
+    total_amount: 118 * item.quantity,
+    currency: "USD",
+    created_at: iso(clock),
+    refund_status: null,
+    customer: { customer_id: `cus_${n}`, email: `buyer${n}@example.com`, name: `Buyer ${n}` },
+  });
   return { subId, paymentId };
 }
 
@@ -410,7 +431,7 @@ test("manage: lists servers, releases a seat, changes quantity, cancels, opens b
 
   html = await (await postForm("manage", { manage_key: manage, action: "cancel", target: subId })).text();
   assert.match(html, /Cancelled/);
-  assert.deepEqual(dodoCalls.at(-1).body, { cancel_at_next_billing_date: true });
+  assert.deepEqual(dodoCalls.filter((c) => c.method === "PATCH").at(-1).body, { cancel_at_next_billing_date: true });
   assert.match(html, /class="badge warn">Cancels \d+ \w+ \d{4}</, "shown as cancelling, with the end date");
   assert.doesNotMatch(html, /value="cancel"/, "no second cancel button");
 });
@@ -458,6 +479,94 @@ test("recover: a paid checkout whose return page never loaded gets its keys", as
   assert.match(html, /HFXS(-[0-9A-Z]{5}){4}/);
   dodo.payments.get(paymentId).status = "failed";
   assert.match(await (await postForm("recover", { payment_id: paymentId })).text(), /isn&#39;t a paid|isn't a paid/, "only succeeded payments count");
+});
+
+// --- refunds ----------------------------------------------------------------
+
+const manageHtml = async (manage, fields = {}) => (await postForm("manage", { manage_key: manage, ...fields })).text();
+
+test("refund request: offered within 7 days of a payment and emailed to us once; nothing else changes", async () => {
+  const { manage, subId, paymentId, activation } = await buy(2);
+  let html = await manageHtml(manage);
+  assert.match(html, /Request a refund/);
+  assert.ok(html.includes(`name="action" value="refund"><input type="hidden" name="target" value="${subId}">`));
+
+  html = await manageHtml(manage, { action: "refund", target: subId, reason: "Bought the wrong number of servers" });
+  assert.match(html, /Refund requested for the payment of/);
+  assert.equal(emails.sent.length, 1);
+  const e = emails.sent[0];
+  assert.deepEqual(e.to, ["billing@buildcraft.town"]);
+  assert.equal(e.from, "Hotfix Server <refunds@buildcraft.town>");
+  assert.equal(e.reply_to, "buyer1@example.com", "replying goes to the customer");
+  assert.equal(e.subject, `[TEST] Refund request: Hotfix Server, ${paymentId} (2.36 USD)`);
+  assert.match(e.text, /Bought the wrong number of servers/);
+  assert.match(e.text, new RegExp(`Subscription: ${subId}, 2 servers`));
+  assert.match(e.idempotencyKey, /^rr_[0-9a-f]{24}$/);
+
+  // Shown as requested; asking again sends nothing.
+  html = await manageHtml(manage);
+  assert.match(html, /Refund requested on/);
+  assert.doesNotMatch(html, /Send refund request/);
+  assert.match(await manageHtml(manage, { action: "refund", target: subId }), /already been requested/);
+  assert.equal(emails.sent.length, 1);
+  // A request alone changes nothing: no Dodo writes, the servers stay licensed.
+  assert.equal(dodoCalls.filter((c) => c.method !== "GET" && c.path.startsWith("/subscriptions")).length, 0);
+  assert.equal((await postJSON("activate", { key: activation, ...machine("a") })).status, 200);
+});
+
+test("refund request: not offered after 7 days, for refunded payments, or without the Resend variables", async () => {
+  const { manage, subId, paymentId } = await buy(1);
+  clock += 8 * 86400;
+  assert.doesNotMatch(await manageHtml(manage), /Request a refund/);
+  assert.match(await manageHtml(manage, { action: "refund", target: subId }), /no payment from the last 7 days/);
+  clock -= 8 * 86400;
+
+  dodo.payments.get(paymentId).refund_status = "full";
+  assert.doesNotMatch(await manageHtml(manage), /Request a refund/);
+  dodo.payments.get(paymentId).refund_status = null;
+
+  delete env.RESEND_API_KEY;
+  assert.doesNotMatch(await manageHtml(manage), /Request a refund/);
+  assert.match(await manageHtml(manage, { action: "refund", target: subId }), /aren&#39;t available|aren't available/);
+  assert.equal(emails.sent.length, 0);
+});
+
+test("refund request: if the email can't be sent, nothing is recorded and the buyer can retry", async () => {
+  const { manage, subId } = await buy(1);
+  emails.fail = true;
+  assert.match(await manageHtml(manage, { action: "refund", target: subId }), /couldn&#39;t be sent|couldn't be sent/);
+  assert.equal(Number((await sql("SELECT COUNT(*) n FROM refund_requests"))[0].n), 0);
+  emails.fail = false;
+  assert.match(await manageHtml(manage, { action: "refund", target: subId }), /Refund requested for/);
+  assert.equal(Number((await sql("SELECT COUNT(*) n FROM refund_requests"))[0].n), 1);
+});
+
+test("refund: refunding the payment in Dodo ends the subscription at once; its servers stop being licensed", async () => {
+  const { activation, subId, paymentId } = await buy(1);
+  const seat = await (await postJSON("activate", { key: activation, ...machine("a") })).json();
+  dodo.payments.get(paymentId).refund_status = "full";
+  const refundEvent = () => signed({ type: "refund.succeeded", data: { refund_id: "ref_1", payment_id: paymentId, payload_type: "Refund" } });
+  assert.equal((await call("webhook", refundEvent())).status, 200);
+
+  const patches = () => dodoCalls.filter((c) => c.method === "PATCH" && c.path === `/subscriptions/${subId}`);
+  assert.equal(patches().length, 1);
+  assert.equal(patches()[0].body.status, "cancelled");
+  assert.equal(dodo.subs.get(subId).status, "cancelled");
+  assert.equal((await sql("SELECT status FROM subscriptions WHERE id = ?", subId))[0].status, "cancelled");
+  const c = claims((await (await postJSON("refresh", { seat_id: seat.seat_id, seat_secret: seat.seat_secret, ...machine("a") })).json()).token);
+  assert.equal(c.status, "inactive", "no seats, though the paid period hasn't ended");
+  assert.equal((await postJSON("activate", { key: activation, ...machine("b") })).status, 403);
+
+  await call("webhook", refundEvent()); // replayed
+  assert.equal(patches().length, 1, "already cancelled: not cancelled again");
+});
+
+test("refund: events for payments that aren't refunded or aren't ours are ignored", async () => {
+  const { subId, paymentId } = await buy(1);
+  assert.equal((await call("webhook", signed({ type: "refund.succeeded", data: { payment_id: paymentId } }))).status, 200);
+  assert.equal((await call("webhook", signed({ type: "refund.succeeded", data: { payment_id: "pay_UNKNOWN0000000" } }))).status, 200);
+  assert.equal(dodoCalls.filter((c) => c.method === "PATCH").length, 0);
+  assert.equal(dodo.subs.get(subId).status, "active");
 });
 
 // --- webhook ----------------------------------------------------------------
