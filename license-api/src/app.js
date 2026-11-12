@@ -652,148 +652,314 @@ export { makeKey };
 // ---------------------------------------------------------------------------
 // Pages
 
+// Same look as the product site (docs/server.html): cream paper, Fraunces
+// headings, Manrope text, burnt-orange accent.
 const STYLE = `
-  body { margin: 0; min-height: 100vh; display: grid; place-items: center;
-         font: 16px/1.5 system-ui, sans-serif; background: #14110f; color: #f3ece6; }
-  main { max-width: 40rem; padding: 2rem 1rem; }
-  h1 { font-size: 1.5rem; margin: 0 0 .75rem; }
-  p, li { color: #c9bdb3; }
-  a { color: #f6a06a; }
-  code, .key { font-family: ui-monospace, monospace; }
-  .key { display: block; font-size: 1.15rem; padding: .6rem .8rem; margin: .3rem 0 1rem;
-         background: #221c18; border: 1px solid #4a403a; border-radius: .5rem; user-select: all; }
-  input { font: inherit; padding: .5rem .6rem; border-radius: .4rem; border: 1px solid #4a403a;
-          background: #221c18; color: #f3ece6; }
-  button { font: inherit; font-weight: 600; padding: .6rem 1.2rem; border: 0; border-radius: .5rem;
-           background: #f26b1d; color: #fff; cursor: pointer; }
-  button.quiet { background: transparent; color: #c9bdb3; border: 1px solid #4a403a; padding: .3rem .7rem; }
-  table { border-collapse: collapse; width: 100%; margin: .5rem 0 1.5rem; }
-  td, th { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid #2c2521; font-size: .92rem; }
-  .notice { background: #2a2016; border-left: 3px solid #f26b1d; padding: .6rem .8rem; }
-  form.inline { display: inline; }`;
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root { --bg: #F6F4F0; --paper: #FBFAF7; --card: #EDEAE5; --dark: #141416; --accent: #C9461E;
+          --border: rgba(20,20,22,.10); --muted: rgba(20,20,22,.58);
+          --ok: #2F7A4B; --warn: #9A5B0B; --bad: #B3261E; }
+  body { background: var(--bg); color: var(--dark); font: 15px/1.55 'Manrope', system-ui, sans-serif;
+         -webkit-font-smoothing: antialiased; min-height: 100vh; display: flex; flex-direction: column; }
+  a { color: inherit; }
+  code { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: .9em; }
+  header { display: flex; align-items: center; justify-content: space-between; height: 60px; padding: 0 32px;
+           border-bottom: 1px solid var(--border); background: rgba(246,244,240,.92); }
+  .logo { display: flex; align-items: center; gap: 10px; font-weight: 700; text-decoration: none; }
+  header nav { display: flex; gap: 22px; font-size: 13px; font-weight: 600; }
+  header nav a { text-decoration: none; color: var(--muted); }
+  header nav a:hover { color: var(--dark); }
+  main { flex: 1; width: 100%; max-width: 560px; margin: 0 auto; padding: 56px 20px 72px; }
+  main.wide { max-width: 760px; }
+  .eyebrow { font-size: 11px; font-weight: 700; letter-spacing: 1.4px; text-transform: uppercase; color: var(--accent); margin-bottom: 10px; }
+  h1 { font-family: 'Fraunces', Georgia, serif; font-weight: 400; font-size: clamp(30px, 5vw, 42px);
+       line-height: 1.1; letter-spacing: -.5px; margin-bottom: 14px; }
+  h2 { font-size: 12px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; color: var(--muted); margin: 40px 0 12px; }
+  p { color: var(--muted); margin-bottom: 12px; }
+  p strong { color: var(--dark); }
+  .lead { font-size: 16px; margin-bottom: 28px; }
+  .small { font-size: 13px; color: var(--muted); }
+  .fine { font-size: 13px; margin-top: 22px; }
+  .fine a, .lead a, p a { text-decoration: underline; text-underline-offset: 2px; }
+  .card { background: var(--paper); border: 1px solid var(--border); border-radius: 16px; padding: 26px;
+          box-shadow: 0 1px 2px rgba(20,20,22,.04); }
+  .card + .card { margin-top: 14px; }
+  .card.flush { padding: 0; overflow-x: auto; }
+  .notice { background: rgba(201,70,30,.08); border: 1px solid rgba(201,70,30,.22); color: var(--dark);
+            border-radius: 12px; padding: 12px 16px; margin-bottom: 22px; font-size: 14px; }
+  label.field { display: block; font-size: 13px; font-weight: 700; margin-bottom: 6px; }
+  input { font: inherit; width: 100%; padding: 11px 13px; border: 1px solid rgba(20,20,22,.16); border-radius: 10px;
+          background: #fff; color: var(--dark); }
+  input:focus { outline: 3px solid rgba(201,70,30,.18); border-color: var(--accent); }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; font: inherit; font-size: 14px;
+         font-weight: 700; padding: 12px 22px; border-radius: 10px; border: 0; cursor: pointer; text-decoration: none;
+         background: var(--accent); color: #fff; white-space: nowrap; }
+  .btn:hover { opacity: .92; }
+  .btn.block { width: 100%; margin-top: 18px; }
+  .btn.dark { background: var(--dark); }
+  .btn.quiet { background: #fff; color: var(--dark); border: 1px solid rgba(20,20,22,.16); padding: 8px 14px; font-size: 13px; }
+  .btn.quiet:hover { background: var(--card); opacity: 1; }
+  .btn.danger { color: var(--bad); }
+  form.inline { display: inline-flex; gap: 8px; align-items: center; }
+  /* buy */
+  .price { display: flex; align-items: center; gap: 14px; padding-bottom: 22px; margin-bottom: 22px; border-bottom: 1px solid var(--border); }
+  .price .amount { font-family: 'Fraunces', Georgia, serif; font-weight: 300; font-size: 64px; line-height: 1; }
+  .price .per { font-size: 13px; font-weight: 600; color: var(--muted); line-height: 1.35; }
+  .stepper { display: flex; gap: 8px; }
+  .stepper input { text-align: center; font-weight: 700; font-size: 18px; -moz-appearance: textfield; }
+  .stepper input::-webkit-inner-spin-button { -webkit-appearance: none; }
+  .stepper .btn.quiet { width: 48px; font-size: 20px; padding: 0; }
+  .total { margin: 12px 0 0; font-size: 14px; }
+  details { margin-top: 16px; font-size: 14px; }
+  summary { cursor: pointer; color: var(--muted); font-weight: 600; }
+  details[open] summary { margin-bottom: 10px; }
+  .checks { list-style: none; margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--border); }
+  .checks li { position: relative; padding: 5px 0 5px 26px; font-size: 14px; color: var(--muted); }
+  .checks li::before { content: "✓"; position: absolute; left: 2px; color: var(--accent); font-weight: 800; }
+  /* keys */
+  .done { width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center; margin-bottom: 18px;
+          background: rgba(47,122,75,.12); color: var(--ok); font-size: 24px; font-weight: 800; }
+  .key-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+  .key-label { font-weight: 700; }
+  .key { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: 17px; letter-spacing: .5px;
+         background: #fff; border: 1px dashed rgba(20,20,22,.22); border-radius: 10px; padding: 12px 14px;
+         user-select: all; word-break: break-all; }
+  .cmd { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: var(--dark);
+         color: #f3ece6; border-radius: 12px; padding: 12px 12px 12px 16px; }
+  .cmd code { white-space: nowrap; overflow-x: auto; min-width: 0; flex: 1; }
+  .cmd .btn.quiet { background: rgba(255,255,255,.08); color: #fff; border-color: rgba(255,255,255,.18); }
+  /* manage */
+  .usage-text { color: var(--dark); font-size: 17px; margin-bottom: 12px; }
+  .bar { height: 8px; border-radius: 99px; background: var(--card); overflow: hidden; }
+  .bar span { display: block; height: 100%; background: var(--accent); border-radius: 99px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th { text-align: left; font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--muted);
+       padding: 14px 18px 10px; border-bottom: 1px solid var(--border); }
+  td { padding: 12px 18px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  tr:last-child td { border-bottom: 0; }
+  td.right { text-align: right; }
+  .empty { padding: 26px; }
+  .sub-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+  .sub-title { font-weight: 700; font-size: 16px; }
+  .sub-meta { font-size: 13px; color: var(--muted); margin-top: 2px; }
+  .sub-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+  .sub-actions input { width: 76px; padding: 7px 10px; text-align: center; }
+  .badge { font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 99px; white-space: nowrap; }
+  .badge.ok { background: rgba(47,122,75,.12); color: var(--ok); }
+  .badge.warn { background: rgba(154,91,11,.12); color: var(--warn); }
+  .badge.bad { background: rgba(179,38,30,.10); color: var(--bad); }
+  .badge.muted { background: var(--card); color: var(--muted); }
+  .alert { margin-top: 14px; font-size: 13px; color: var(--bad); }
+  .add { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+  .add .stepper { flex: 1; min-width: 200px; }
+  footer { padding: 26px 20px; text-align: center; font-size: 12px; color: var(--muted); border-top: 1px solid var(--border); }
+  footer a { text-decoration: underline; text-underline-offset: 2px; }
+  @media (max-width: 600px) { header { padding: 0 16px; } main { padding-top: 36px; } .card { padding: 20px; }
+    .price .amount { font-size: 52px; } th:nth-child(2), td:nth-child(2) { display: none; } }`;
 
+// The buy and manage pages' server steppers (with the monthly total), and the
+// keys page's copy buttons.
+const SCRIPT = `
+  document.querySelectorAll(".stepper").forEach((s) => {
+    const input = s.querySelector("input"), total = s.closest("form").querySelector("[data-total]");
+    const clamp = (n) => Math.min(Number(input.max) || 1000, Math.max(1, n || 1));
+    const show = () => { if (total) total.textContent = "$" + clamp(parseInt(input.value, 10)); };
+    s.querySelectorAll("[data-step]").forEach((b) => b.addEventListener("click", () => {
+      input.value = clamp((parseInt(input.value, 10) || 1) + Number(b.dataset.step)); show();
+    }));
+    input.addEventListener("input", show); show();
+  });
+  document.querySelectorAll("[data-copy]").forEach((b) => b.addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(b.dataset.copy); const t = b.textContent; b.textContent = "Copied"; setTimeout(() => (b.textContent = t), 1500); } catch {}
+  }));`;
+
+const SITE = "https://hotfix.buildcraft.town/server.html";
 const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
-function page(title, inner) {
+function page(title, inner, { wide = false } = {}) {
   return new Response(
     `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex">
-<title>Hotfix Server — ${esc(title)}</title><style>${STYLE}</style></head>
-<body><main>${inner.startsWith("<h1") ? "" : `<h1>${esc(title)}</h1>`}${inner}</main></body></html>`,
+<title>Hotfix Server — ${esc(title)}</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔥</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400&family=Manrope:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>${STYLE}</style></head>
+<body>
+<header><a class="logo" href="${SITE}"><span>🔥</span><span>Hotfix Server</span></a>
+<nav><a href="/api/server/buy">Buy</a><a href="/api/server/manage">Manage license</a></nav></header>
+<main${wide ? ' class="wide"' : ""}>${/<h1/.test(inner.slice(0, 300)) ? "" : `<h1>${esc(title)}</h1>`}${inner}</main>
+<footer>Hotfix Server by BuildCraft Labs · <a href="${SITE}">Product page</a> · <a href="/api/server/recover">Lost your keys?</a></footer>
+<script>${SCRIPT}</script>
+</body></html>`,
     { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "X-Frame-Options": "DENY" } },
   );
 }
 
+const notice = (text) => (text ? `<p class="notice">${esc(text)}</p>` : "");
+
 function billingOffPage(status = 503) {
   const res = page(
     "Buy Hotfix Server",
-    `<h1>Hotfix Server</h1>
-<p><strong>$1 per server per month.</strong> Purchases open soon.</p>
-<p>Until then every server gets a 14-day free trial when you install it, no card needed.</p>`,
+    `<p class="eyebrow">Hotfix Server</p>
+<h1>Purchases open soon</h1>
+<p class="lead"><strong>$1 per server per month.</strong> Until then every server gets a 14-day free trial when you install it, no card needed.</p>
+<a class="btn" href="${SITE}#install">Install the free trial</a>`,
   );
   return new Response(res.body, { status, headers: res.headers });
+}
+
+function stepper(value = 1) {
+  return `<div class="stepper"><button type="button" class="btn quiet" data-step="-1" aria-label="Fewer servers">−</button>
+<input id="quantity" name="quantity" type="number" min="1" max="${MAX_QUANTITY}" value="${value}" required inputmode="numeric" aria-label="Servers">
+<button type="button" class="btn quiet" data-step="1" aria-label="More servers">+</button></div>`;
 }
 
 function buyPage(url) {
   return page(
     "Buy Hotfix Server",
-    `<h1>Buy Hotfix Server</h1>
-<p><strong>$1 per server per month.</strong> Every server also gets a 14-day free trial when you install it, no card needed.</p>
-<form method="post" action="${url.origin}/api/server/checkout">
-  <p><label>Servers: <input name="quantity" type="number" min="1" max="${MAX_QUANTITY}" value="1" required style="width:6rem"></label></p>
-  <p><label>Adding servers to an existing license? Its manage key (optional):<br>
-    <input name="manage_key" placeholder="HFXM-…" style="width:22rem" autocomplete="off"></label></p>
-  <button type="submit">Continue</button>
-</form>
-<p>After paying you get an activation key for your servers and a manage key for billing.</p>`,
+    `<p class="eyebrow">Hotfix Server</p>
+<h1>Keep runaway processes off your servers</h1>
+<p class="lead"><strong>$1 per server per month.</strong> Every server also gets a 14-day free trial when you install it, no card needed.</p>
+<div class="card">
+  <div class="price"><span class="amount">$1</span><span class="per">per server<br>per month</span></div>
+  <form method="post" action="${url.origin}/api/server/checkout">
+    <label class="field" for="quantity">How many servers?</label>
+    ${stepper()}
+    <p class="total"><strong data-total>$1</strong> per month, plus tax where it applies.</p>
+    <details><summary>Adding servers to a license you already have?</summary>
+      <label class="field" for="manage_key">Its manage key</label>
+      <input id="manage_key" name="manage_key" placeholder="HFXM-…" autocomplete="off" spellcheck="false">
+    </details>
+    <button class="btn block" type="submit">Continue to payment</button>
+  </form>
+  <ul class="checks">
+    <li>One activation key for all your servers</li>
+    <li>Add or remove servers any time</li>
+    <li>Cancel any time: servers stay covered until the end of the month you paid for</li>
+  </ul>
+</div>
+<p class="fine">After paying you get an activation key for your servers and a manage key for billing. Payments are handled by Dodo Payments, our merchant of record, who also send your invoices.</p>`,
   );
 }
 
 function keysPage(url, keys, heading, extra = "") {
   const file = `Hotfix Server license\n\nActivation key (put on your servers):\n${keys.activation}\n\nManage key (billing, keep private):\n${keys.manage}\n\nManage: ${url.origin}/api/server/manage\n`;
+  const command = `sudo hotfixd license activate ${keys.activation}`;
+  const keyCard = (label, hint, key) => `<div class="card">
+  <div class="key-head"><div><div class="key-label">${label}</div><div class="small">${hint}</div></div>
+  <button type="button" class="btn quiet" data-copy="${esc(key)}">Copy</button></div>
+  <div class="key">${esc(key)}</div>
+</div>`;
   return page(
     heading,
-    `<h1>${esc(heading)}</h1>
-${extra ? `<p class="notice">${esc(extra)}</p>` : ""}
-<p><strong>Save these keys now: they are shown only once.</strong></p>
-<p>Activation key: put this on your servers.</p>
-<span class="key">${esc(keys.activation)}</span>
-<p>Manage key: for billing (add servers, cancel). Keep it private.</p>
-<span class="key">${esc(keys.manage)}</span>
-<p><a download="hotfix-server-license.txt" href="data:text/plain;charset=utf-8,${encodeURIComponent(file)}">Download as a text file</a></p>
+    `<div class="done">✓</div>
+<h1>${esc(heading)}</h1>
+${notice(extra)}
+<p class="notice"><strong>Save these keys now: they are shown only once.</strong> Download them, or copy them somewhere safe.</p>
+${keyCard("Activation key", "Put this on your servers.", keys.activation)}
+${keyCard("Manage key", "For billing: add servers, cancel. Keep it private.", keys.manage)}
+<p style="margin-top:16px"><a class="btn dark" download="hotfix-server-license.txt" href="data:text/plain;charset=utf-8,${encodeURIComponent(file)}">Download as a text file</a></p>
 <h2>Activate a server</h2>
-<p><code>sudo hotfixd license activate ${esc(keys.activation)}</code> (Windows: in an administrator prompt, without sudo)</p>
-<p>Manage your license any time at <a href="${url.origin}/api/server/manage">${url.origin}/api/server/manage</a>.</p>`,
+<div class="cmd"><code>${esc(command)}</code><button type="button" class="btn quiet" data-copy="${esc(command)}">Copy</button></div>
+<p class="fine">On Windows, run it in an administrator prompt, without <code>sudo</code>. Manage your license any time at <a href="${url.origin}/api/server/manage">${url.origin}/api/server/manage</a>.</p>`,
+    { wide: true },
   );
 }
 
 function manageLoginPage(url, error = "") {
   return page(
     "Manage your license",
-    `<h1>Manage your Hotfix Server license</h1>
-${error ? `<p class="notice">${esc(error)}</p>` : ""}
-<form method="post" action="${url.origin}/api/server/manage">
-  <p><label>Manage key:<br><input name="manage_key" placeholder="HFXM-…" style="width:22rem" autocomplete="off" required></label></p>
-  <button type="submit">Open</button>
-</form>
-<p>Lost your keys? <a href="${url.origin}/api/server/recover">Get new ones</a>.</p>`,
+    `<p class="eyebrow">Manage</p>
+<h1>Your Hotfix Server license</h1>
+<p class="lead">Open your license with its manage key to see your servers, change how many you pay for, cancel, or get invoices.</p>
+${notice(error)}
+<div class="card"><form method="post" action="${url.origin}/api/server/manage">
+  <label class="field" for="manage_key">Manage key</label>
+  <input id="manage_key" name="manage_key" placeholder="HFXM-…" autocomplete="off" spellcheck="false" required>
+  <button class="btn block" type="submit">Open</button>
+</form></div>
+<p class="fine">Lost your keys? <a href="${url.origin}/api/server/recover">Get new ones</a>.</p>`,
   );
 }
 
-async function managePage(env, url, manageKey, licenseId, now, notice) {
+function statusBadge(s) {
+  if (s.cancel_scheduled && LIVE.has(s.status)) return ["warn", `Cancels ${formatDate(s.current_end)}`];
+  const known = { active: ["ok", "Active"], past_due: ["warn", "Payment retrying"], on_hold: ["bad", "On hold"], pending: ["muted", "Pending"], paused: ["muted", "Paused"] };
+  return known[s.status] || ["muted", s.status.charAt(0).toUpperCase() + s.status.slice(1)];
+}
+
+async function managePage(env, url, manageKey, licenseId, now, message) {
   const { seats, subscriptions } = await licenseSeats(env, licenseId, now);
   const servers = (await env.DB.prepare("SELECT * FROM seats WHERE license_id = ? AND lease_until > ? ORDER BY last_seen DESC").bind(licenseId, now).all()).results || [];
   const mk = esc(manageKey);
   const hidden = (action, target) => `<input type="hidden" name="manage_key" value="${mk}"><input type="hidden" name="action" value="${action}"><input type="hidden" name="target" value="${esc(target)}">`;
 
-  const statusText = (s) =>
-    s.cancel_scheduled && LIVE.has(s.status)
-      ? "cancelling"
-      : { past_due: "payment failed (retrying)", on_hold: "on hold: update the payment method under Billing" }[s.status] || s.status;
-  const subRows = subscriptions
+  const subCards = subscriptions
     .map((s) => {
       const live = LIVE.has(s.status) && !s.cancel_scheduled;
-      return `<tr><td>${esc(s.id)}</td><td>${s.quantity}</td><td>${esc(statusText(s))}</td><td>${s.current_end ? formatDate(s.current_end) : ""}</td>
-<td>${live ? `<form class="inline" method="post">${hidden("quantity", s.id)}<input name="quantity" type="number" min="1" max="${MAX_QUANTITY}" value="${s.quantity}" style="width:4.5rem"> <button class="quiet">Change</button></form>
-<form class="inline" method="post" onsubmit="return confirm('Cancel this subscription at the end of the paid period?')">${hidden("cancel", s.id)}<button class="quiet">Cancel</button></form>` : ""}
-${s.customer_id ? `<form class="inline" method="post">${hidden("billing", s.id)}<button class="quiet">Billing</button></form>` : ""}</td></tr>`;
+      const [tone, label] = statusBadge(s);
+      const when = s.current_end ? ` · ${live ? "Renews" : "Covered until"} ${formatDate(s.current_end)}` : "";
+      return `<div class="card">
+<div class="sub-head"><div><div class="sub-title">${plural(s.quantity, "server")} · $${s.quantity}/month</div>
+<div class="sub-meta"><code>${esc(s.id)}</code>${when}</div></div><span class="badge ${tone}">${esc(label)}</span></div>
+${s.status === "on_hold" ? `<p class="alert">The last payment failed. Update your payment method under Billing to reactivate it.</p>` : ""}
+<div class="sub-actions">
+${live ? `<form class="inline" method="post">${hidden("quantity", s.id)}<input name="quantity" type="number" min="1" max="${MAX_QUANTITY}" value="${s.quantity}" aria-label="Servers"><button class="btn quiet">Change</button></form>` : ""}
+${s.customer_id ? `<form class="inline" method="post">${hidden("billing", s.id)}<button class="btn quiet">Billing</button></form>` : ""}
+${live ? `<form class="inline" method="post" onsubmit="return confirm('Cancel this subscription at the end of the paid period?')">${hidden("cancel", s.id)}<button class="btn quiet danger">Cancel</button></form>` : ""}
+</div></div>`;
     })
     .join("");
   const serverRows = servers
     .map(
-      (s) => `<tr><td>${esc(s.hostname || "?")}</td><td>${esc(s.os)}</td><td>${esc(s.version)}</td><td>${formatDate(s.last_seen)}</td>
-<td><form class="inline" method="post" onsubmit="return confirm('Release this server\\'s seat?')">${hidden("release", s.id)}<button class="quiet">Release</button></form></td></tr>`,
+      (s) => `<tr><td><strong>${esc(s.hostname || "?")}</strong><div class="small">${esc(s.os)}</div></td><td>${esc(s.version)}</td><td>${formatDate(s.last_seen)}</td>
+<td class="right"><form class="inline" method="post" onsubmit="return confirm('Release this server\\'s seat?')">${hidden("release", s.id)}<button class="btn quiet">Release</button></form></td></tr>`,
     )
     .join("");
+  const pct = seats ? Math.min(100, Math.round((servers.length / seats) * 100)) : 0;
 
   return page(
     "Your license",
-    `<h1>Your Hotfix Server license</h1>
-${notice ? `<p class="notice">${esc(notice)}</p>` : ""}
-<p><strong>${servers.length}</strong> of <strong>${seats}</strong> server${seats === 1 ? "" : "s"} in use.</p>
+    `<p class="eyebrow">Your license</p>
+<h1>Hotfix Server</h1>
+${notice(message)}
+<div class="card">
+  <p class="usage-text"><strong>${servers.length}</strong> of <strong>${seats}</strong> server${seats === 1 ? "" : "s"} in use</p>
+  <div class="bar"><span style="width:${pct}%"></span></div>
+</div>
 <h2>Servers</h2>
-${servers.length ? `<table><tr><th>Host</th><th>OS</th><th>Version</th><th>Last seen</th><th></th></tr>${serverRows}</table>` : "<p>No servers activated yet.</p>"}
+<div class="card flush">${
+      servers.length
+        ? `<table><thead><tr><th>Server</th><th>Version</th><th>Last seen</th><th></th></tr></thead><tbody>${serverRows}</tbody></table>`
+        : `<div class="empty"><p>No servers activated yet.</p><p class="small">On each server, run <code>sudo hotfixd license activate &lt;activation key&gt;</code>.</p></div>`
+    }</div>
 <h2>Subscriptions</h2>
-<table><tr><th>Subscription</th><th>Servers</th><th>Status</th><th>Paid until</th><th></th></tr>${subRows}</table>
-<form method="post" action="${url.origin}/api/server/checkout">
+${subCards || `<div class="card"><p>No subscriptions.</p></div>`}
+<h2>Add servers</h2>
+<div class="card"><form method="post" action="${url.origin}/api/server/checkout">
   <input type="hidden" name="manage_key" value="${mk}">
-  <label>Add servers: <input name="quantity" type="number" min="1" max="${MAX_QUANTITY}" value="1" style="width:4.5rem"></label>
-  <button>Buy</button>
-</form>
-<p>Dodo Payments emails an invoice after every payment. <strong>Billing</strong> opens their customer portal: invoices and your payment method.</p>`,
+  <div class="add">${stepper()}<button class="btn">Buy</button></div>
+  <p class="total"><strong data-total>$1</strong> more per month. Your activation key covers the new servers.</p>
+</form></div>
+<p class="fine">Dodo Payments emails an invoice after every payment. <strong>Billing</strong> opens their customer portal: invoices and your payment method.</p>`,
+    { wide: true },
   );
 }
 
 function recoverPage(url, error = "") {
   return page(
     "Lost your keys?",
-    `<h1>Get new license keys</h1>
-${error ? `<p class="notice">${esc(error)}</p>` : ""}
-<p>Enter the payment id (pay_…) from a Dodo Payments receipt email for this license. You'll get new keys; the old ones stop working, and servers that are already activated keep running.</p>
-<form method="post" action="${url.origin}/api/server/recover">
-  <p><label>Payment id:<br><input name="payment_id" placeholder="pay_…" style="width:22rem" required></label></p>
-  <button type="submit">Get new keys</button>
-</form>`,
+    `<p class="eyebrow">Recover</p>
+<h1>Get new license keys</h1>
+<p class="lead">Enter the payment id (pay_…) from a Dodo Payments receipt email for this license. You'll get new keys; the old ones stop working, and servers that are already activated keep running.</p>
+${notice(error)}
+<div class="card"><form method="post" action="${url.origin}/api/server/recover">
+  <label class="field" for="payment_id">Payment id</label>
+  <input id="payment_id" name="payment_id" placeholder="pay_…" autocomplete="off" spellcheck="false" required>
+  <button class="btn block" type="submit">Get new keys</button>
+</form></div>`,
   );
 }
 
