@@ -1,7 +1,8 @@
 # Hotfix Server licensing API (`license-api/`)
 
 The backend that sells and licenses Hotfix Server: **$1 per server per month**
-on Razorpay Subscriptions, license keys, server seats and 14-day trials, and
+on [Dodo Payments](https://dodopayments.com) subscriptions (merchant of record:
+they handle sales tax / VAT and invoices), license keys, server seats and 14-day trials, and
 the Ed25519-signed tokens `hotfixd` checks (`server/license.go`).
 
 - **Runs on [Railway](https://railway.com)** at `https://license.buildcraft.town`
@@ -15,10 +16,16 @@ the Ed25519-signed tokens `hotfixd` checks (`server/license.go`).
 
 ## Set it up on Railway (once)
 
-**1. Razorpay** (start in Test Mode):
-- Enable Subscriptions.
-- Create a monthly Plan at **$1.00** (USD needs international payments enabled on the account).
-- Create API keys (key id + secret).
+**1. Dodo Payments** (start in Test Mode; test and live have separate products, keys and webhooks):
+- **Products → Create Product → Subscription**: "Hotfix Server", **$1.00 USD**, billed
+  every **1 month**, with a long subscription period (e.g. 20 years: a period equal to
+  the billing interval would expire after one charge). No trial (`hotfixd` has its
+  own). Customers buy one unit per server. Copy its `pdt_…` id.
+- **Settings → Subscriptions**: a grace period (e.g. 7 days) for failed renewals.
+  Servers stay licensed while it runs (`past_due`), and stop once the
+  subscription goes `on_hold`.
+- **Developer → API Keys**: a key with **Write** access to Subscriptions, Payments
+  (checkout sessions) and Customers (billing portal).
 
 **2. Signing key** — on your computer, from this folder:
 ```bash
@@ -45,18 +52,19 @@ railway up --service license-api    # build the Dockerfile and deploy this folde
    |---|---|
    | `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` (reference to the database) |
    | `SERVER_LICENSE_SIGNING_KEY` | the **private** key from step 2 |
-   | `RAZORPAY_KEY_ID` | `rzp_test_…` (later `rzp_live_…`) |
-   | `RAZORPAY_KEY_SECRET` | the key secret |
-   | `RAZORPAY_SERVER_PLAN_ID` | `plan_…` from step 1 |
-   | `RAZORPAY_WEBHOOK_SECRET` | any long random string (also used in step 5) |
+   | `DODO_PAYMENTS_ENVIRONMENT` | `test_mode` (later `live_mode`) |
+   | `DODO_PAYMENTS_API_KEY` | the API key from step 1 |
+   | `DODO_SERVER_PRODUCT_ID` | `pdt_…` from step 1 |
+   | `DODO_PAYMENTS_WEBHOOK_KEY` | the webhook's signing secret (`whsec_…`) from step 5 |
    | `GITHUB_TOKEN` | optional: a read-only token, for the "new version available" lookup |
    | `TRIAL_DAYS`, `TRIAL_IP_DAILY` | optional: 14 and 25 by default |
 
    The service refuses to start if a required variable is missing (see the deploy
-   logs); setting variables in the dashboard redeploys it. The four `RAZORPAY_*`
+   logs); setting variables in the dashboard redeploys it. The four `DODO_*`
    variables are all or nothing: with **none** set, billing is off. Trials and
    `hotfixd` license calls work, the buy page says "Purchases open soon", and
-   checkout/manage/recover/webhook answer 503. Setting all four turns it on.
+   checkout/success/manage/recover/webhook answer 503. Setting all four (in one
+   change, or the service refuses to start) turns it on.
 2. Backups: see [Backups](#backups) (the `pg-backup` service and `backups` bucket in the same file).
 3. `railway domain status <id>` (or the service's **Networking** tab) shows the
    DNS records for `license.buildcraft.town`.
@@ -67,8 +75,20 @@ cloud), not proxied**. The API reads the client's address from Railway's
 `X-Real-IP`; behind Cloudflare's proxy every customer would look like a
 Cloudflare address and trip the per-network trial cap.
 
-**5. Razorpay webhook:** `https://license.buildcraft.town/api/server/webhook`,
-secret = `RAZORPAY_WEBHOOK_SECRET`, events: all `subscription.*`.
+**5. Dodo Payments webhook** (Developer → Webhooks → Add endpoint):
+`https://license.buildcraft.town/api/server/webhook`, events: all
+`subscription.*`. Copy its signing secret into `DODO_PAYMENTS_WEBHOOK_KEY`.
+Every event is checked (Standard Webhooks signature, at most 5 minutes old)
+and the subscription is then re-read from Dodo, so a replayed or out-of-order
+event can't store a stale state.
+
+How a purchase flows: `checkout` creates a Dodo checkout session and records
+it (`checkouts` table) under a random ref, which goes into the return URL and
+the session's metadata. A Dodo subscription only exists once it's paid, and
+the return URL's `subscription_id` is unsigned, so `success` re-reads the
+subscription and only shows keys if it's this product's and matches that ref
+(through the metadata, or the checkout session of its first payment). Lost the
+page? `recover` issues new keys for the payment id on Dodo's receipt email.
 
 **6. GitHub:** repo variable `SERVER_LICENSE_PUBLIC_KEY` = the **public** key
 from step 2. The Server workflow compiles it into `hotfixd` and refuses to
@@ -76,8 +96,9 @@ release without it.
 
 Check it: `https://license.buildcraft.town/healthz` says `ok`, and
 `https://license.buildcraft.town/api/server/buy` shows the buy page. Make a
-test purchase with a Razorpay test card (e.g. Visa `4384 7968 2770 3274`, any
-future expiry, any CVV), then switch the Razorpay variables to live keys.
+test purchase with a Dodo test card (Visa `4242 4242 4242 4242`, expiry `06/32`,
+CVV `123`), then do step 1 and 5 again in Live Mode and switch the four `DODO_*`
+variables to the live values.
 
 Deploys: `railway up --service license-api` from this folder. (To deploy on
 every push to `main` instead, connect the service to the GitHub repo in its

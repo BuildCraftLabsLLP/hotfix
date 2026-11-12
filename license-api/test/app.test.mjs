@@ -2,17 +2,17 @@
 //   npm test                     (in license-api/; Node 24+)
 // The database is PostgreSQL: PGlite (Postgres in WebAssembly) by default, or a
 // real server when TEST_DATABASE_URL is set (CI), emptied between tests. The
-// Razorpay and GitHub APIs are faked in-process. Nothing touches the network.
+// Dodo Payments and GitHub APIs are faked in-process. Nothing touches the network.
 import { test, beforeEach, afterEach, after } from "node:test";
 import assert from "node:assert/strict";
 import { createHmac, generateKeyPairSync, verify as edVerify } from "node:crypto";
 
-import api, { makeKey, normalizeKey } from "../src/app.js";
+import api, { makeKey, normalizeKey, webhookSignatureValid } from "../src/app.js";
 import { pglite, postgres } from "../src/db.js";
 
-const KEY_ID = "rzp_test_key";
-const KEY_SECRET = "rzp_test_secret";
-const WEBHOOK_SECRET = "whsec_server";
+const API_KEY = "dodo_test_key";
+const WEBHOOK_KEY = "whsec_" + Buffer.from("hotfix-server-webhook-signing-key").toString("base64");
+const PRODUCT_ID = "pdt_SERVER0000001";
 const { publicKey, privateKey } = generateKeyPairSync("ed25519");
 
 const fp = (c) => c.repeat(64);
@@ -24,65 +24,74 @@ after(async () => shared && (await shared.close()));
 let store;
 async function freshStore() {
   if (!shared) return pglite();
-  await shared.db.prepare("TRUNCATE seats, subscriptions, licenses, kv").run();
+  await shared.db.prepare("TRUNCATE seats, checkouts, subscriptions, licenses, kv").run();
   return shared;
 }
 // Direct SQL for assertions.
 const sql = async (text, ...args) => (await store.db.prepare(text).bind(...args).all()).results;
 
-let env, rzp, rzpCalls, clock;
+let env, dodo, dodoCalls, clock;
 const realFetch = globalThis.fetch;
 const realNow = Date.now;
+const iso = (unix) => new Date(unix * 1000).toISOString();
 
 beforeEach(async () => {
   store = await freshStore();
   env = {
     DB: store.db,
     KV: store.kv,
-    RAZORPAY_KEY_ID: KEY_ID,
-    RAZORPAY_KEY_SECRET: KEY_SECRET,
-    RAZORPAY_WEBHOOK_SECRET: WEBHOOK_SECRET,
-    RAZORPAY_SERVER_PLAN_ID: "plan_SERVER0000001",
+    DODO_PAYMENTS_API_KEY: API_KEY,
+    DODO_PAYMENTS_WEBHOOK_KEY: WEBHOOK_KEY,
+    DODO_SERVER_PRODUCT_ID: PRODUCT_ID,
+    DODO_PAYMENTS_ENVIRONMENT: "test_mode",
     SERVER_LICENSE_SIGNING_KEY: privateKey.export({ type: "pkcs8", format: "der" }).toString("base64"),
   };
   clock = 1_800_000_000;
   Date.now = () => clock * 1000;
-  rzp = { subs: new Map(), patchFails: [], invoices: new Map() };
-  rzpCalls = [];
+  // copyMetadata: whether Dodo carries the session's metadata over to the subscription
+  // (undocumented; the app also matches by the payment's checkout session).
+  dodo = { sessions: [], subs: new Map(), payments: new Map(), changeFails: [], copyMetadata: true };
+  dodoCalls = [];
   globalThis.fetch = async (url, init = {}) => {
     const u = new URL(url);
     if (u.origin === "https://api.github.com") {
       return Response.json([{ tag_name: "v1.0.13", draft: false, prerelease: false }, { tag_name: "server-v1.2.0", draft: false, prerelease: false }]);
     }
-    assert.equal(u.origin, "https://api.razorpay.com");
-    assert.equal(init.headers.Authorization, `Basic ${Buffer.from(`${KEY_ID}:${KEY_SECRET}`).toString("base64")}`);
+    assert.equal(u.origin, "https://test.dodopayments.com");
+    assert.equal(init.headers.Authorization, `Bearer ${API_KEY}`);
     const body = init.body ? JSON.parse(init.body) : null;
-    rzpCalls.push({ method: init.method, path: u.pathname + u.search, body });
+    dodoCalls.push({ method: init.method, path: u.pathname, query: Object.fromEntries(u.searchParams), body });
+    const notFound = () => Response.json({ code: "NOT_FOUND", message: "not found" }, { status: 404 });
     let m;
-    if (init.method === "POST" && u.pathname === "/v1/subscriptions") {
-      const id = "sub_" + (rzp.subs.size + 1).toString().padStart(14, "0");
-      rzp.subs.set(id, { id, status: "created", quantity: body.quantity, notes: body.notes });
-      return Response.json(rzp.subs.get(id));
+    if (init.method === "POST" && u.pathname === "/checkouts") {
+      const session_id = `cks_${dodo.sessions.length + 1}`;
+      dodo.sessions.push({ session_id, ...body });
+      return Response.json({ session_id, checkout_url: `https://test.checkout.dodopayments.com/session/${session_id}` });
     }
-    if ((m = u.pathname.match(/^\/v1\/subscriptions\/(sub_\w+)$/))) {
-      const s = rzp.subs.get(m[1]);
-      if (init.method === "PATCH") {
-        const fail = rzp.patchFails.shift();
-        if (fail) return Response.json({ error: { description: fail } }, { status: 400 });
-        if (body.schedule_change_at === "now") s.quantity = body.quantity;
-        else s.has_scheduled_changes = true;
-      }
+    if ((m = u.pathname.match(/^\/subscriptions\/(sub_\w+)$/))) {
+      const s = dodo.subs.get(m[1]);
+      if (!s) return notFound();
+      if (init.method === "PATCH") Object.assign(s, body);
       return Response.json(s);
     }
-    if ((m = u.pathname.match(/^\/v1\/subscriptions\/(sub_\w+)\/cancel$/))) {
-      const s = rzp.subs.get(m[1]);
-      s.has_scheduled_changes = true;
-      return Response.json(s);
+    if ((m = u.pathname.match(/^\/subscriptions\/(sub_\w+)\/change-plan$/))) {
+      const s = dodo.subs.get(m[1]);
+      const fail = dodo.changeFails.shift();
+      if (fail) return Response.json({ code: "INVALID_REQUEST", message: fail }, { status: 422 });
+      if (body.effective_at === "immediately") s.quantity = body.quantity;
+      else s.scheduled_change = { quantity: body.quantity, effective_at: s.next_billing_date };
+      return Response.json({ payment_id: null });
     }
-    if (u.pathname === "/v1/invoices") {
-      return Response.json({ items: rzp.invoices.get(u.searchParams.get("subscription_id")) || [] });
+    if (u.pathname === "/payments") {
+      return Response.json({ items: [...dodo.payments.values()].filter((p) => p.subscription_id === u.searchParams.get("subscription_id")) });
     }
-    return Response.json({ error: { description: "unsupported" } }, { status: 400 });
+    if ((m = u.pathname.match(/^\/payments\/(pay_\w+)$/))) {
+      return dodo.payments.has(m[1]) ? Response.json(dodo.payments.get(m[1])) : notFound();
+    }
+    if ((m = u.pathname.match(/^\/customers\/(cus_\w+)\/customer-portal\/session$/))) {
+      return Response.json({ link: `https://test.customer.dodopayments.com/${m[1]}?return=${encodeURIComponent(u.searchParams.get("return_url"))}` });
+    }
+    return Response.json({ code: "UNSUPPORTED", message: "unsupported" }, { status: 400 });
   };
 });
 
@@ -104,27 +113,57 @@ function claims(token) {
   return JSON.parse(Buffer.from(body, "base64url").toString());
 }
 
-// Buys `quantity` seats end-to-end and returns the keys shown on the success page.
-async function buy(quantity, manageKey) {
+// Starts a checkout; returns the session as Dodo received it, plus our ref.
+async function startCheckout(quantity, manageKey) {
   const res = await postForm("checkout", { quantity: String(quantity), ...(manageKey ? { manage_key: manageKey } : {}) });
-  const html = await res.text();
-  const subId = html.match(/success\?sub=(sub_\w+)/)[1];
-  rzp.subs.get(subId).status = "active";
-  rzp.subs.get(subId).current_end = clock + 30 * 86400;
-  const page = await (await paySuccess(subId)).text();
-  const keys = { activation: page.match(/HFXS(-[0-9A-Z]{5}){4}/)?.[0], manage: page.match(/HFXM(-[0-9A-Z]{5}){4}/)?.[0], subId, page };
-  return keys;
+  assert.equal(res.status, 303, "redirects to Dodo's checkout");
+  const session = dodo.sessions.at(-1);
+  assert.equal(res.headers.get("Location"), `https://test.checkout.dodopayments.com/session/${session.session_id}`);
+  return { session, ref: new URL(session.return_url).searchParams.get("ref") };
 }
 
-function paySuccess(subId, { paymentId = "pay_" + subId.slice(4), signature } = {}) {
-  return call(`success?sub=${subId}`, {
-    method: "POST",
-    body: new URLSearchParams({ razorpay_payment_id: paymentId, razorpay_subscription_id: subId, razorpay_signature: signature ?? createHmac("sha256", KEY_SECRET).update(`${paymentId}|${subId}`).digest("hex") }).toString(),
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+// The customer pays on Dodo's page: Dodo creates the subscription and its first payment.
+function pay(session, { status = "active" } = {}) {
+  const n = dodo.subs.size + 1;
+  const subId = `sub_${String(n).padStart(14, "0")}`;
+  const item = session.product_cart[0];
+  dodo.subs.set(subId, {
+    subscription_id: subId,
+    product_id: item.product_id,
+    quantity: item.quantity,
+    status,
+    customer: { customer_id: `cus_${n}`, email: `buyer${n}@example.com` },
+    metadata: dodo.copyMetadata ? session.metadata : {},
+    next_billing_date: iso(clock + 30 * 86400),
+    cancel_at_next_billing_date: false,
+    scheduled_change: null,
   });
+  const paymentId = `pay_${String(n).padStart(14, "0")}`;
+  dodo.payments.set(paymentId, { payment_id: paymentId, subscription_id: subId, checkout_session_id: session.session_id, status: "succeeded" });
+  return { subId, paymentId };
+}
+
+const returnTo = (ref, subId) => call(`success?ref=${ref}&subscription_id=${subId}&status=active`);
+
+// Buys `quantity` seats end-to-end and returns the keys shown on the success page.
+async function buy(quantity, manageKey) {
+  const { session, ref } = await startCheckout(quantity, manageKey);
+  const { subId, paymentId } = pay(session);
+  const page = await (await returnTo(ref, subId)).text();
+  return { activation: page.match(/HFXS(-[0-9A-Z]{5}){4}/)?.[0], manage: page.match(/HFXM(-[0-9A-Z]{5}){4}/)?.[0], subId, paymentId, ref, page };
 }
 
 const machine = (c, extra = {}) => ({ fingerprint: fp(c), instance_id: inst(c), hostname: `host-${c}`, os: "linux", version: "1.0.0", ...extra });
+
+// Standard Webhooks, as Dodo signs them.
+let webhookSeq = 0;
+function signed(event, { key = WEBHOOK_KEY, ts = clock } = {}) {
+  const body = JSON.stringify({ business_id: "bus_1", timestamp: iso(clock), ...event });
+  const id = `msg_${++webhookSeq}`;
+  const sig = createHmac("sha256", Buffer.from(key.replace(/^whsec_/, ""), "base64")).update(`${id}.${ts}.${body}`).digest("base64");
+  return { method: "POST", body, headers: { "webhook-id": id, "webhook-timestamp": String(ts), "webhook-signature": `v1,${sig}` } };
+}
+const subEvent = (type, subId) => signed({ type, data: { subscription_id: subId, payload_type: "Subscription" } });
 
 // --- keys -------------------------------------------------------------------
 
@@ -176,31 +215,67 @@ test("trial: rejects bad fingerprints", async () => {
 
 // --- buying -----------------------------------------------------------------
 
-test("buy: checkout creates a subscription for N seats; success issues keys once", async () => {
+test("buy: checkout creates a session for N seats; the return page issues keys once", async () => {
   const keys = await buy(3);
-  const create = rzpCalls.find((c) => c.method === "POST" && c.path === "/v1/subscriptions");
-  assert.equal(create.body.quantity, 3);
-  assert.equal(create.body.plan_id, "plan_SERVER0000001");
-  assert.deepEqual(create.body.notes, { product: "server" });
+  const session = dodo.sessions[0];
+  assert.deepEqual(session.product_cart, [{ product_id: PRODUCT_ID, quantity: 3 }]);
+  assert.equal(session.metadata.product, "server");
+  assert.equal(session.metadata.ref, keys.ref);
+  assert.equal(session.return_url, `https://license.buildcraft.town/api/server/success?ref=${keys.ref}`);
   assert.ok(keys.activation && keys.manage, "both keys shown");
   assert.match(keys.page, /shown only once/);
 
-  const again = await (await paySuccess(keys.subId)).text();
+  const again = await (await returnTo(keys.ref, keys.subId)).text();
   assert.match(again, /already processed/);
   assert.doesNotMatch(again, /HFXS-/, "keys are never shown twice");
 
   const stored = await sql("SELECT * FROM licenses");
   assert.equal(stored.length, 1);
   assert.doesNotMatch(JSON.stringify(stored), new RegExp(keys.activation.replace(/-/g, "").slice(4)), "only hashes are stored");
+  const [sub] = await sql("SELECT * FROM subscriptions");
+  assert.equal(sub.quantity, 3);
+  assert.equal(sub.customer_id, "cus_1");
+  assert.equal(sub.current_end, clock + 30 * 86400);
 });
 
-test("buy: forged or unpaid callbacks issue nothing", async () => {
-  const res = await postForm("checkout", { quantity: "1" });
-  const subId = (await res.text()).match(/success\?sub=(sub_\w+)/)[1];
-  assert.equal((await paySuccess(subId, { signature: "0".repeat(64) })).status, 400);
-  // Genuine signature but the subscription isn't paid.
-  assert.match(await (await paySuccess(subId)).text(), /Payment not completed/);
-  assert.equal(Number((await sql("SELECT COUNT(*) n FROM licenses"))[0].n), 0);
+test("buy: matched by the payment's checkout session when Dodo doesn't copy the metadata", async () => {
+  dodo.copyMetadata = false;
+  const keys = await buy(1);
+  assert.ok(keys.activation, "keys shown");
+});
+
+test("buy: another checkout's return URL can't claim a subscription", async () => {
+  const victim = await startCheckout(1);
+  const { subId } = pay(victim.session);
+  const attacker = await startCheckout(1);
+  const res = await returnTo(attacker.ref, subId);
+  assert.equal(res.status, 400);
+  assert.doesNotMatch(await res.text(), /HFXS-/);
+  assert.match(await (await returnTo(victim.ref, subId)).text(), /HFXS-/, "the real buyer still gets the keys");
+  assert.equal((await returnTo("0".repeat(32), subId)).status, 400, "unknown checkout");
+  assert.equal((await call(`success?ref=${victim.ref}&subscription_id=sub_NOPE0000000000`)).status, 400, "unknown subscription");
+});
+
+test("buy: other Dodo products are never adopted", async () => {
+  const { session, ref } = await startCheckout(1);
+  session.product_cart[0].product_id = "pdt_SOMETHINGELSE";
+  const { subId } = pay(session);
+  const res = await returnTo(ref, subId);
+  assert.equal(res.status, 400);
+  assert.doesNotMatch(await res.text(), /HFXS-/);
+  await call("webhook", subEvent("subscription.active", subId));
+  assert.equal((await sql("SELECT * FROM subscriptions")).length, 0);
+});
+
+test("buy: pending, failed and abandoned payments issue nothing", async () => {
+  const { session, ref } = await startCheckout(1);
+  const { subId } = pay(session, { status: "pending" });
+  assert.match(await (await returnTo(ref, subId)).text(), /Payment processing/, "e-mandates confirm later");
+  dodo.subs.get(subId).status = "failed";
+  assert.match(await (await returnTo(ref, subId)).text(), /Payment not completed/);
+  assert.match(await (await call(`success?ref=${ref}&status=failed`)).text(), /Payment not completed/, "no subscription at all");
+  dodo.subs.get(subId).status = "active";
+  assert.match(await (await returnTo(ref, subId)).text(), /HFXS-/, "issued once it goes through");
   assert.match(await (await postForm("checkout", { quantity: "0" })).text(), /between 1 and/);
 });
 
@@ -262,16 +337,24 @@ test("seats: a server that stops refreshing frees its seat when its lease ends",
 test("refresh: a lapsed subscription turns the token inactive; renewal brings it back", async () => {
   const { activation, subId } = await buy(1);
   const seat = await (await postJSON("activate", { key: activation, ...machine("a") })).json();
-  rzp.subs.get(subId).status = "halted";
-  await call("webhook", signed({ event: "subscription.halted", payload: { subscription: { entity: { id: subId } } } }));
-  let c = claims((await (await postJSON("refresh", { seat_id: seat.seat_id, seat_secret: seat.seat_secret, ...machine("a") })).json()).token);
+  const refreshPlan = async () => claims((await (await postJSON("refresh", { seat_id: seat.seat_id, seat_secret: seat.seat_secret, ...machine("a") })).json()).token);
+
+  dodo.subs.get(subId).status = "past_due"; // grace period: still covered
+  await call("webhook", subEvent("subscription.past_due", subId));
+  assert.equal((await refreshPlan()).status, "active");
+
+  dodo.subs.get(subId).status = "on_hold";
+  await call("webhook", subEvent("subscription.on_hold", subId));
+  let c = await refreshPlan();
   assert.equal(c.status, "inactive");
   assert.equal(c.plan, "lapsed");
 
-  rzp.subs.get(subId).status = "active";
-  await call("webhook", signed({ event: "subscription.activated", payload: { subscription: { entity: { id: subId } } } }));
-  c = claims((await (await postJSON("refresh", { seat_id: seat.seat_id, seat_secret: seat.seat_secret, ...machine("a") })).json()).token);
+  dodo.subs.get(subId).status = "active";
+  dodo.subs.get(subId).next_billing_date = iso(clock + 60 * 86400);
+  await call("webhook", subEvent("subscription.renewed", subId));
+  c = await refreshPlan();
   assert.equal(c.status, "active");
+  assert.equal((await sql("SELECT current_end FROM subscriptions WHERE id = ?", subId))[0].current_end, clock + 60 * 86400);
 });
 
 test("refresh: flags a seat used by two different machines", async () => {
@@ -283,36 +366,52 @@ test("refresh: flags a seat used by two different machines", async () => {
 
 // --- manage -----------------------------------------------------------------
 
-test("manage: lists servers, releases a seat, changes quantity, cancels", async () => {
+test("manage: lists servers, releases a seat, changes quantity, cancels, opens billing", async () => {
   const { activation, manage, subId } = await buy(2);
   const seat = await (await postJSON("activate", { key: activation, ...machine("a") })).json();
+  const changePlan = () => dodoCalls.filter((c) => c.path.endsWith("/change-plan")).at(-1).body;
 
   assert.match(await (await postForm("manage", { manage_key: makeKey("HFXM") })).text(), /wasn&#39;t recognized|wasn't recognized/);
   let html = await (await postForm("manage", { manage_key: manage })).text();
   assert.match(html, /1<\/strong> of <strong>2<\/strong>/);
   assert.match(html, /host-a/);
+  for (const action of ["quantity", "cancel", "billing"]) {
+    assert.ok(html.includes(`name="action" value="${action}"><input type="hidden" name="target" value="${subId}">`), `${action} button targets the subscription`);
+  }
 
   html = await (await postForm("manage", { manage_key: manage, action: "release", target: seat.seat_id })).text();
   assert.match(html, /Server released/);
   assert.match(html, /0<\/strong> of <strong>2/);
 
-  // Increase: immediate.
+  // Increase: immediate, prorated for the rest of the cycle.
   html = await (await postForm("manage", { manage_key: manage, action: "quantity", target: subId, quantity: "5" })).text();
   assert.match(html, /Now 5 servers/);
-  assert.deepEqual(rzpCalls.at(-1).body, { quantity: 5, schedule_change_at: "now" });
-  // Immediate change refused (e.g. below Razorpay's minimum): scheduled, seats granted anyway.
-  rzp.patchFails.push("amount too low");
+  assert.deepEqual(changePlan(), { product_id: PRODUCT_ID, quantity: 5, proration_billing_mode: "prorated_immediately_keep_cycle", effective_at: "immediately", on_payment_failure: "prevent_change" });
+  // Charge refused (e.g. below Dodo's minimum): applied now, billed from the next renewal.
+  dodo.changeFails.push("TOTAL_PAYMENT_AMOUNT_BELOW_MINIMUM_AMOUNT");
   html = await (await postForm("manage", { manage_key: manage, action: "quantity", target: subId, quantity: "6" })).text();
   assert.match(html, /Now 6 servers/);
-  assert.equal(rzpCalls.at(-1).body.schedule_change_at, "cycle_end");
-  // UPI / e-mandate: can't change.
-  rzp.patchFails.push("cannot be updated when payment mode is UPI");
+  assert.deepEqual(changePlan(), { product_id: PRODUCT_ID, quantity: 6, proration_billing_mode: "do_not_bill", effective_at: "immediately" });
+  assert.match(html, /0<\/strong> of <strong>6/);
+  // Decrease: at the next billing date; seats stay until then, even when Dodo syncs.
   html = await (await postForm("manage", { manage_key: manage, action: "quantity", target: subId, quantity: "2" })).text();
+  assert.match(html, /at the next billing date/);
+  assert.equal(changePlan().effective_at, "next_billing_date");
+  await call("webhook", subEvent("subscription.updated", subId));
+  assert.equal((await sql("SELECT quantity FROM subscriptions WHERE id = ?", subId))[0].quantity, 6);
+  // Dodo refuses outright.
+  dodo.changeFails.push("no", "no");
+  html = await (await postForm("manage", { manage_key: manage, action: "quantity", target: subId, quantity: "9" })).text();
   assert.match(html, /can&#39;t be changed|can't be changed/);
+
+  const billing = await postForm("manage", { manage_key: manage, action: "billing", target: subId });
+  assert.equal(billing.status, 303);
+  assert.match(billing.headers.get("Location"), /^https:\/\/test\.customer\.dodopayments\.com\/cus_1\?return=https%3A%2F%2Flicense\.buildcraft\.town%2Fapi%2Fserver%2Fmanage$/);
 
   html = await (await postForm("manage", { manage_key: manage, action: "cancel", target: subId })).text();
   assert.match(html, /Cancelled/);
-  assert.deepEqual(rzpCalls.at(-1).body, { cancel_at_cycle_end: true });
+  assert.deepEqual(dodoCalls.at(-1).body, { cancel_at_next_billing_date: true });
+  assert.match(html, /cancelling/);
 });
 
 test("manage: buying more servers adds them to the same license", async () => {
@@ -324,15 +423,24 @@ test("manage: buying more servers adds them to the same license", async () => {
   assert.equal((await postJSON("activate", { key: first.activation, ...machine("e") })).status, 409);
 });
 
+test("manage: added servers count once paid, even if the return page never loads", async () => {
+  const first = await buy(1);
+  const { session, ref } = await startCheckout(2, first.manage);
+  const { subId } = pay(session);
+  await call("webhook", subEvent("subscription.active", subId));
+  for (const ch of "abcd") assert.equal((await postJSON("activate", { key: first.activation, ...machine(ch) })).status, 200, ch);
+  assert.match(await (await returnTo(ref, subId)).text(), /2 servers added/, "the late return page still confirms");
+});
+
 // --- recovery ---------------------------------------------------------------
 
-test("recover: new keys with the receipt's ids; activated servers keep working", async () => {
-  const { activation, subId } = await buy(1);
+test("recover: new keys with the receipt's payment id; activated servers keep working", async () => {
+  const { activation, paymentId } = await buy(1);
   const seat = await (await postJSON("activate", { key: activation, ...machine("a") })).json();
-  rzp.invoices.set(subId, [{ id: "inv_1", payment_id: "pay_REAL", status: "paid" }]);
 
-  assert.match(await (await postForm("recover", { subscription_id: subId, payment_id: "pay_FAKE" })).text(), /doesn&#39;t belong|doesn't belong/);
-  const html = await (await postForm("recover", { subscription_id: subId, payment_id: "pay_REAL" })).text();
+  assert.match(await (await postForm("recover", { payment_id: "pay_FAKE0000000000" })).text(), /isn&#39;t a paid|isn't a paid/);
+  assert.match(await (await postForm("recover", { payment_id: "nope" })).text(), /exactly as it appears/);
+  const html = await (await postForm("recover", { payment_id: paymentId })).text();
   const fresh = html.match(/HFXS(-[0-9A-Z]{5}){4}/)[0];
   assert.notEqual(fresh, activation);
 
@@ -341,37 +449,54 @@ test("recover: new keys with the receipt's ids; activated servers keep working",
   assert.equal((await postJSON("refresh", { seat_id: seat.seat_id, seat_secret: seat.seat_secret, ...machine("a") })).status, 200, "existing seat unaffected");
 });
 
-// --- webhook ----------------------------------------------------------------
-
-function signed(event, secret = WEBHOOK_SECRET) {
-  const body = JSON.stringify(event);
-  return { method: "POST", body, headers: { "X-Razorpay-Signature": createHmac("sha256", secret).update(body).digest("hex") } };
-}
-
-test("webhook: signature checked; state re-fetched from Razorpay", async () => {
-  const { subId } = await buy(1);
-  const ev = { event: "subscription.cancelled", payload: { subscription: { entity: { id: subId, status: "cancelled" } } } };
-  assert.equal((await call("webhook", signed(ev, "wrong"))).status, 400);
-  // The event says cancelled, Razorpay says active: Razorpay wins.
-  assert.equal((await call("webhook", signed(ev))).status, 200);
-  assert.equal((await sql("SELECT status FROM subscriptions WHERE id = ?", subId))[0].status, "active");
-  // Unknown subscriptions are ignored.
-  const other = { event: "subscription.activated", payload: { subscription: { entity: { id: "sub_UNKNOWN0000000" } } } };
-  assert.equal((await call("webhook", signed(other))).status, 200);
+test("recover: a paid checkout whose return page never loaded gets its keys", async () => {
+  const { session } = await startCheckout(2);
+  const { paymentId } = pay(session);
+  const html = await (await postForm("recover", { payment_id: paymentId })).text();
+  assert.match(html, /subscribed for 2 servers/);
+  assert.match(html, /HFXS(-[0-9A-Z]{5}){4}/);
+  dodo.payments.get(paymentId).status = "failed";
+  assert.match(await (await postForm("recover", { payment_id: paymentId })).text(), /isn&#39;t a paid|isn't a paid/, "only succeeded payments count");
 });
 
-test("billing off: no Razorpay variables -> trials and activation work, purchases don't", async () => {
-  for (const k of ["RAZORPAY_KEY_ID", "RAZORPAY_KEY_SECRET", "RAZORPAY_WEBHOOK_SECRET", "RAZORPAY_SERVER_PLAN_ID"]) delete env[k];
+// --- webhook ----------------------------------------------------------------
+
+test("webhook: Standard Webhooks signature checked; state re-fetched from Dodo", async () => {
+  const { subId } = await buy(1);
+  const ev = { type: "subscription.cancelled", data: { subscription_id: subId, status: "cancelled" } };
+  assert.equal((await call("webhook", signed(ev, { key: "whsec_" + Buffer.from("wrong").toString("base64") }))).status, 400);
+  assert.equal((await call("webhook", signed(ev, { ts: clock - 600 }))).status, 400, "stale timestamp (replay)");
+  assert.equal((await call("webhook", { method: "POST", body: JSON.stringify(ev) })).status, 400, "unsigned");
+  const multi = signed(ev);
+  multi.headers["webhook-signature"] = `v1,AAAA ${multi.headers["webhook-signature"]}`;
+  assert.equal((await call("webhook", multi)).status, 200, "any matching v1 signature is accepted");
+  // The event says cancelled, Dodo says active: Dodo wins.
+  assert.equal((await sql("SELECT status FROM subscriptions WHERE id = ?", subId))[0].status, "active");
+  // Unknown subscriptions, and payment events, are ignored.
+  assert.equal((await call("webhook", subEvent("subscription.active", "sub_UNKNOWN0000000"))).status, 200);
+  assert.equal((await call("webhook", signed({ type: "payment.succeeded", data: { payment_id: "pay_1", subscription_id: subId } }))).status, 200);
+});
+
+test("webhook: matches the Standard Webhooks specification's test vector", async () => {
+  // From github.com/standard-webhooks/standard-webhooks, independent of signed() above.
+  clock = 1614265330;
+  const headers = new Headers({ "webhook-id": "msg_p5jXN8AQM9LWM0D4loKWxJek", "webhook-timestamp": "1614265330", "webhook-signature": "v1,g0hM9SsE+OTPJTGt/tmIKtSyZlE3uFJELVlNIOLJ1OE=" });
+  assert.equal(await webhookSignatureValid("whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw", headers, '{"test": 2432232314}'), true);
+  assert.equal(await webhookSignatureValid("whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw", headers, '{"test": 2432232315}'), false);
+});
+
+test("billing off: no Dodo variables -> trials and activation work, purchases don't", async () => {
+  for (const k of ["DODO_PAYMENTS_API_KEY", "DODO_PAYMENTS_WEBHOOK_KEY", "DODO_SERVER_PRODUCT_ID", "DODO_PAYMENTS_ENVIRONMENT"]) delete env[k];
   const buyRes = await call("buy");
   assert.equal(buyRes.status, 200);
   const html = await buyRes.text();
   assert.match(html, /\$1 per server per month/);
   assert.match(html, /Purchases open soon/);
   assert.doesNotMatch(html, /checkout/);
-  for (const [path, init] of [["checkout", { method: "POST" }], ["success?sub=sub_1", { method: "POST" }], ["manage", {}], ["manage", { method: "POST" }], ["recover", {}], ["webhook", { method: "POST" }]]) {
+  for (const [path, init] of [["checkout", { method: "POST" }], [`success?ref=${"0".repeat(32)}`, {}], ["manage", {}], ["manage", { method: "POST" }], ["recover", {}], ["webhook", { method: "POST" }]]) {
     assert.equal((await call(path, init)).status, 503, path);
   }
-  assert.equal(rzpCalls.length, 0);
+  assert.equal(dodoCalls.length, 0);
   const t = await postJSON("trial", { fingerprint: fp("a") });
   assert.equal(t.status, 200);
   assert.equal(claims((await t.json()).token).plan, "trial");
