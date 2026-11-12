@@ -24,8 +24,9 @@ the Ed25519-signed tokens `hotfixd` checks (`server/license.go`).
 - **Settings → Subscriptions**: a grace period (e.g. 7 days) for failed renewals.
   Servers stay licensed while it runs (`past_due`), and stop once the
   subscription goes `on_hold`.
-- **Developer → API Keys**: a key with **Write** access to Subscriptions, Payments
-  (checkout sessions) and Customers (billing portal).
+- **Developer → API Keys**: a key with **Write** access to Checkout Sessions,
+  Subscriptions, Payments and Customers (billing portal); to create the product
+  and webhook through the API as well, Products and Webhooks too.
 
 **2. Signing key** — on your computer, from this folder:
 ```bash
