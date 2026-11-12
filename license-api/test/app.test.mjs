@@ -411,7 +411,8 @@ test("manage: lists servers, releases a seat, changes quantity, cancels, opens b
   html = await (await postForm("manage", { manage_key: manage, action: "cancel", target: subId })).text();
   assert.match(html, /Cancelled/);
   assert.deepEqual(dodoCalls.at(-1).body, { cancel_at_next_billing_date: true });
-  assert.match(html, /cancelling/);
+  assert.match(html, /class="badge warn">Cancels \d+ \w+ \d{4}</, "shown as cancelling, with the end date");
+  assert.doesNotMatch(html, /value="cancel"/, "no second cancel button");
 });
 
 test("manage: buying more servers adds them to the same license", async () => {
